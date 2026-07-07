@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars and fill in values (never commit terraform.tfvars)
+location    = "canadacentral"
+environment = "dev"
+
+jenkins_admin_username = "azureuser"
+jenkins_admin_password = "REPLACE_WITH_STRONG_PASSWORD"
+
+mongodb_uri = "mongodb+srv://user:pass@cluster.mongodb.net/northwind-policy-hub"
+jwt_secret  = "REPLACE_WITH_MIN_32_CHAR_RANDOM_STRING"
