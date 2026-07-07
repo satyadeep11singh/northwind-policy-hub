@@ -86,17 +86,17 @@ module "key_vault" {
   tags                = local.common_tags
 }
 
-module "app_service" {
-  source              = "./modules/app_service"
-  resource_group_name = azurerm_resource_group.app.name
-  location            = var.location
-  suffix              = local.suffix
-  environment         = var.environment
-  acr_login_server    = module.acr.login_server
-  acr_name            = module.acr.name
-  key_vault_uri       = module.key_vault.vault_uri
-  app_insights_conn   = module.app_insights.connection_string
-  tags                = local.common_tags
+module "container_apps" {
+  source                     = "./modules/container_apps"
+  resource_group_name        = azurerm_resource_group.app.name
+  location                   = var.location
+  suffix                     = local.suffix
+  acr_login_server           = module.acr.login_server
+  acr_name                   = module.acr.name
+  key_vault_uri              = module.key_vault.vault_uri
+  app_insights_conn          = module.app_insights.connection_string
+  log_analytics_workspace_id = module.app_insights.log_analytics_workspace_id
+  tags                       = local.common_tags
 
   depends_on = [module.acr, module.key_vault, module.app_insights]
 }
@@ -134,11 +134,11 @@ resource "azurerm_key_vault_secret" "appinsights_conn" {
   tags         = local.common_tags
 }
 
-# ── Grant App Service Managed Identity access to Key Vault ───────────────────
-resource "azurerm_key_vault_access_policy" "app_service" {
+# ── Grant the shared UAI (used by all container apps) access to Key Vault ────
+resource "azurerm_key_vault_access_policy" "container_app" {
   key_vault_id = module.key_vault.vault_id
   tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = module.app_service.identity_principal_id
+  object_id    = module.container_apps.uai_principal_id
 
   secret_permissions = ["Get", "List"]
 }

@@ -93,7 +93,7 @@ resource "azurerm_linux_virtual_machine" "jenkins" {
   name                = "vm-jenkins-${var.suffix}"
   resource_group_name = var.resource_group_name
   location            = var.location
-  size                = "Standard_B2s"   # 2 vCPU, 4 GB — sufficient for Jenkins + Docker
+  size                = "Standard_B2ps_v2"   # 2 vCPU, 4 GB — available in canadacentral
   admin_username      = var.admin_username
   tags                = var.tags
 
@@ -112,10 +112,10 @@ resource "azurerm_linux_virtual_machine" "jenkins" {
   source_image_reference {
     publisher = "Canonical"
     offer     = "0001-com-ubuntu-server-jammy"
-    sku       = "22_04-lts-gen2"
+    sku       = "22_04-lts-arm64"
     version   = "latest"
   }
 
   # cloud-init provisions Jenkins, Docker, Azure CLI, and all tooling
-  custom_data = filebase64("${path.module}/../../jenkins/cloud-init.yml")
+  custom_data = filebase64("${path.root}/../jenkins/cloud-init.yml")
 }

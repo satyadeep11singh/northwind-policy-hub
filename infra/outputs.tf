@@ -1,6 +1,20 @@
-output "app_service_url" {
-  description = "Default hostname of the App Service"
-  value       = "https://${module.app_service.default_hostname}"
+output "app_url" {
+  description = "Production Container App URL"
+  value       = "https://${module.container_apps.prod_fqdn}"
+}
+
+output "app_dev_url" {
+  description = "Dev Container App URL"
+  value       = "https://${module.container_apps.dev_fqdn}"
+}
+
+output "app_staging_url" {
+  description = "Staging Container App URL"
+  value       = "https://${module.container_apps.staging_fqdn}"
+}
+
+output "prod_app_name" {
+  value = module.container_apps.prod_app_name
 }
 
 output "acr_login_server" {
@@ -18,7 +32,7 @@ output "key_vault_uri" {
 }
 
 output "jenkins_public_ip" {
-  description = "Public IP of Jenkins VM (use for initial setup only — restrict NSG after)"
+  description = "Public IP of Jenkins VM"
   value       = module.jenkins_vm.public_ip
 }
 
@@ -30,8 +44,4 @@ output "app_insights_connection_string" {
 
 output "resource_group_app" {
   value = azurerm_resource_group.app.name
-}
-
-output "webapp_name" {
-  value = module.app_service.webapp_name
 }
