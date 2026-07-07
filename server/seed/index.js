@@ -156,22 +156,22 @@ async function seed() {
   const sarahAuto = await Policy.create(buildAutoPolicy(
     sarah._id, 'NW-AUTO-2024-00001',
     { year: 2022, make: 'Honda', model: 'CR-V', vin: '2HKRW2H56NH601234', plate: 'BCDF 123' },
-    2280,
+    1620,
     { collision: true, comprehensive: true, roadside: true, waiver: false, rental: true, enhancedAB: true },
   ));
 
   const sarahHome = await Policy.create(buildHomePolicy(
     sarah._id, 'NW-HOME-2024-00001',
     { address: '145 Bay Street', city: 'Toronto', postalCode: 'M5J 2T3', yearBuilt: 1998, squareFootage: 1100, propertyType: 'condo' },
-    480000, 1740,
+    480000, 1320,
     { sewer: true, overland: false, identity: true, jewellery: true, jewelleryAmt: 8000 },
   ));
 
   sarah.policyIds = [sarahAuto._id, sarahHome._id];
   await sarah.save();
 
-  await Billing.create(buildBilling(sarahAuto._id, sarah._id, 2280, 6));
-  await Billing.create(buildBilling(sarahHome._id, sarah._id, 1740, 3));
+  await Billing.create(buildBilling(sarahAuto._id, sarah._id, 1620, 6));
+  await Billing.create(buildBilling(sarahHome._id, sarah._id, 1320, 3));
 
   // Sarah's claims
   await Claim.create({
@@ -217,22 +217,22 @@ async function seed() {
   const marcoAuto1 = await Policy.create(buildAutoPolicy(
     marco._id, 'NW-AUTO-2024-00002',
     { year: 2020, make: 'Toyota', model: 'RAV4', vin: '2T3BFREV0LW123456', plate: 'WXYZ 456' },
-    1980,
+    1420,
     { collision: true, comprehensive: true, roadside: true, enhancedAB: false },
   ));
 
   const marcoAuto2 = await Policy.create(buildAutoPolicy(
     marco._id, 'NW-AUTO-2024-00003',
     { year: 2019, make: 'Ford', model: 'F-150', vin: '1FTEW1EP0KFA78901', plate: 'PQRS 789' },
-    2640,
+    1420,
     { collision: true, comprehensive: true, roadside: true, enhancedAB: false, rental: false },
   ));
 
   marco.policyIds = [marcoAuto1._id, marcoAuto2._id];
   await marco.save();
 
-  await Billing.create(buildBilling(marcoAuto1._id, marco._id, 1980, 6));
-  await Billing.create(buildBilling(marcoAuto2._id, marco._id, 2640, 6));
+  await Billing.create(buildBilling(marcoAuto1._id, marco._id, 1420, 6));
+  await Billing.create(buildBilling(marcoAuto2._id, marco._id, 1420, 6));
 
   await Claim.create({
     claimNumber: 'NW-AUTO-2024-0002',
@@ -254,22 +254,22 @@ async function seed() {
   const priyaAuto = await Policy.create(buildAutoPolicy(
     priya._id, 'NW-AUTO-2024-00004',
     { year: 2023, make: 'Hyundai', model: 'Tucson', vin: '5NMJBCAE0PH012345', plate: 'LMNO 321' },
-    2100,
+    1570,
     { collision: true, comprehensive: true, roadside: true, waiver: true, enhancedAB: false },
   ));
 
   const priyaHome = await Policy.create(buildHomePolicy(
     priya._id, 'NW-HOME-2024-00002',
     { address: '22 Rideau Street', city: 'Ottawa', postalCode: 'K1N 8J9', yearBuilt: 2005, squareFootage: 1850, propertyType: 'semi-detached' },
-    625000, 2040,
+    625000, 1630,
     { sewer: true, overland: true, identity: false, jewellery: false },
   ));
 
   priya.policyIds = [priyaAuto._id, priyaHome._id];
   await priya.save();
 
-  await Billing.create(buildBilling(priyaAuto._id, priya._id, 2100, 6));
-  await Billing.create(buildBilling(priyaHome._id, priya._id, 2040, 3));
+  await Billing.create(buildBilling(priyaAuto._id, priya._id, 1570, 6));
+  await Billing.create(buildBilling(priyaHome._id, priya._id, 1630, 3));
 
   // Priya has no active claims — clean record shown on dashboard
 
