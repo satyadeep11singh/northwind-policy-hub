@@ -77,7 +77,6 @@ pipeline {
     }
 
     stage('Trigger CD') {
-      when { branch 'main' }
       steps {
         build(
           job:        'northwind-policy-hub-cd',

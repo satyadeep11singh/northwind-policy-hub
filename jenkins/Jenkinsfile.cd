@@ -162,7 +162,11 @@ pipeline {
   }
 
   post {
-    always { sh 'az logout || true' }
+    always {
+      node {
+        sh 'az logout || true'
+      }
+    }
     success { echo "DEPLOY SUCCESS — build ${params.BUILD_TAG} is live in production" }
     failure { echo "DEPLOY FAILED — check logs; prod may have been rolled back" }
   }
