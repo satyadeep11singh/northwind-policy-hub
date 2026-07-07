@@ -18,7 +18,7 @@ packages:
   - jq
   - git
   - fontconfig
-  - openjdk-17-jdk
+  - openjdk-21-jdk
 
 write_files:
   - path: /etc/jenkins-ready.flag
@@ -35,8 +35,11 @@ runcmd:
   - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
   # ── Jenkins LTS ───────────────────────────────────────────────────────────
-  - curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
-  - echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" > /etc/apt/sources.list.d/jenkins.list
+  # Import both Jenkins signing keys (project rotated keys; both needed)
+  - curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key -o /tmp/jenkins.key
+  - gpg --no-default-keyring --batch --keyring /usr/share/keyrings/jenkins-keyring.gpg --import /tmp/jenkins.key
+  - gpg --no-default-keyring --batch --keyring /usr/share/keyrings/jenkins-keyring.gpg --keyserver keyserver.ubuntu.com --recv-keys 7198F4B714ABFC68
+  - echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.gpg] https://pkg.jenkins.io/debian-stable binary/" > /etc/apt/sources.list.d/jenkins.list
   - apt-get update -qq
   - apt-get install -y jenkins
 
