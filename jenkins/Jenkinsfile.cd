@@ -1,0 +1,210 @@
+// ── NorthWind Policy Hub — CD Pipeline ───────────────────────────────────────
+// Triggered by: CI pipeline (build job 'northwind-policy-hub-ci') on main branch success
+// Strategy:     Deploy to dev slot → smoke test → swap dev→staging → swap staging→prod
+// Rollback:     Re-swap staging→prod if health check fails post-swap
+
+pipeline {
+  agent any
+
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 20, unit: 'MINUTES')
+    disableConcurrentBuilds()
+    timestamps()
+  }
+
+  parameters {
+    string(name: 'BUILD_TAG', defaultValue: 'latest', description: 'Image tag from CI pipeline (e.g. 42-a1b2c3d)')
+  }
+
+  environment {
+    ACR_LOGIN_SERVER      = credentials('acr-login-server')
+    AZURE_SP              = credentials('azure-sp')
+    AZURE_TENANT_ID       = credentials('azure-tenant-id')
+    AZURE_SUBSCRIPTION_ID = credentials('azure-subscription-id')
+    AZURE_RESOURCE_GROUP  = credentials('azure-resource-group')
+    WEBAPP_NAME           = credentials('webapp-name')
+    IMAGE_NAME            = "northwind-policy-hub"
+    IMAGE_FULL            = "${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${params.BUILD_TAG}"
+  }
+
+  stages {
+
+    stage('Validate Parameters') {
+      steps {
+        script {
+          if (!params.BUILD_TAG || params.BUILD_TAG == '') {
+            error("BUILD_TAG parameter is required")
+          }
+          echo "Deploying image: ${env.IMAGE_FULL}"
+        }
+      }
+    }
+
+    stage('Azure Login') {
+      steps {
+        sh """
+          az login --service-principal \
+            --username "${AZURE_SP_USR}" \
+            --password "${AZURE_SP_PSW}" \
+            --tenant  "${env.AZURE_TENANT_ID}"
+
+          az account set --subscription "${env.AZURE_SUBSCRIPTION_ID}"
+          echo "Logged in to Azure as SP: ${AZURE_SP_USR}"
+        """
+      }
+    }
+
+    stage('Deploy → dev slot') {
+      steps {
+        sh """
+          az webapp config container set \
+            --name          "${env.WEBAPP_NAME}" \
+            --resource-group "${env.AZURE_RESOURCE_GROUP}" \
+            --slot          dev \
+            --docker-custom-image-name "${env.IMAGE_FULL}" \
+            --docker-registry-server-url "https://${env.ACR_LOGIN_SERVER}"
+        """
+        echo "Container config updated on dev slot — App Service will pull the image"
+      }
+    }
+
+    stage('Smoke Test — dev slot') {
+      steps {
+        script {
+          // Wait for the slot to come up with the new image (up to 3 min)
+          def devUrl = sh(
+            script: """az webapp show \
+              --name "${env.WEBAPP_NAME}" \
+              --resource-group "${env.AZURE_RESOURCE_GROUP}" \
+              --slot dev \
+              --query defaultHostName -o tsv""",
+            returnStdout: true,
+          ).trim()
+
+          def maxAttempts = 18
+          def attempt = 0
+          def healthy = false
+
+          while (attempt < maxAttempts && !healthy) {
+            attempt++
+            sleep(10)
+            def result = sh(
+              script: "curl -sf https://${devUrl}/health | grep -q '\"status\":\"ok\"' && echo OK || echo FAIL",
+              returnStdout: true,
+            ).trim()
+
+            if (result == 'OK') {
+              healthy = true
+              echo "dev slot healthy after ${attempt * 10}s"
+            } else {
+              echo "Attempt ${attempt}/${maxAttempts} — waiting for dev slot..."
+            }
+          }
+
+          if (!healthy) {
+            error("dev slot health check failed after ${maxAttempts * 10}s")
+          }
+        }
+      }
+    }
+
+    stage('Swap dev → staging') {
+      steps {
+        sh """
+          az webapp deployment slot swap \
+            --name           "${env.WEBAPP_NAME}" \
+            --resource-group "${env.AZURE_RESOURCE_GROUP}" \
+            --slot           dev \
+            --target-slot    staging
+        """
+        echo "Swapped dev → staging (zero-downtime swap)"
+      }
+    }
+
+    stage('Smoke Test — staging slot') {
+      steps {
+        script {
+          def stagingUrl = sh(
+            script: """az webapp show \
+              --name "${env.WEBAPP_NAME}" \
+              --resource-group "${env.AZURE_RESOURCE_GROUP}" \
+              --slot staging \
+              --query defaultHostName -o tsv""",
+            returnStdout: true,
+          ).trim()
+
+          def result = sh(
+            script: "curl -sf https://${stagingUrl}/health | grep -q '\"status\":\"ok\"' && echo OK || echo FAIL",
+            returnStdout: true,
+          ).trim()
+
+          if (result != 'OK') {
+            error("Staging health check failed — aborting promotion to production")
+          }
+          echo "Staging slot healthy — proceeding to production promotion"
+        }
+      }
+    }
+
+    stage('Promote staging → production') {
+      steps {
+        sh """
+          az webapp deployment slot swap \
+            --name           "${env.WEBAPP_NAME}" \
+            --resource-group "${env.AZURE_RESOURCE_GROUP}" \
+            --slot           staging \
+            --target-slot    production
+        """
+        echo "Production swap complete"
+      }
+    }
+
+    stage('Production Health Check') {
+      steps {
+        script {
+          def prodUrl = sh(
+            script: """az webapp show \
+              --name "${env.WEBAPP_NAME}" \
+              --resource-group "${env.AZURE_RESOURCE_GROUP}" \
+              --query defaultHostName -o tsv""",
+            returnStdout: true,
+          ).trim()
+
+          sleep(15)   // brief settle time post-swap
+          def result = sh(
+            script: "curl -sf https://${prodUrl}/health | grep -q '\"status\":\"ok\"' && echo OK || echo FAIL",
+            returnStdout: true,
+          ).trim()
+
+          if (result != 'OK') {
+            echo "PRODUCTION health check FAILED — initiating rollback"
+            sh """
+              az webapp deployment slot swap \
+                --name           "${env.WEBAPP_NAME}" \
+                --resource-group "${env.AZURE_RESOURCE_GROUP}" \
+                --slot           staging \
+                --target-slot    production
+            """
+            error("Production health check failed — rolled back to previous version via slot swap")
+          }
+
+          echo "PRODUCTION HEALTHY — https://${prodUrl}"
+          env.PROD_URL = "https://${prodUrl}"
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      sh 'az logout || true'
+    }
+    success {
+      echo "DEPLOY SUCCESS — ${env.IMAGE_FULL} is live at ${env.PROD_URL}"
+    }
+    failure {
+      echo "DEPLOY FAILED — check slot state and logs in Azure Portal"
+    }
+  }
+}
