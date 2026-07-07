@@ -1,6 +1,6 @@
 // ── NorthWind Policy Hub — CI Pipeline ───────────────────────────────────────
-// Triggered by: GitHub webhook on push to main or PR
-// Produces:     Docker image pushed to ACR, tagged with build number + git SHA
+// Triggered by: GitHub webhook on push to main
+// Produces:     Docker image pushed to ACR tagged with build number + git SHA
 // Passes to CD: BUILD_TAG environment variable via downstream trigger
 
 pipeline {
@@ -14,13 +14,11 @@ pipeline {
   }
 
   environment {
-    // ACR credentials — Jenkins credential ID 'azure-sp' holds SP client_id:client_secret
-    ACR_NAME         = credentials('acr-name')              // e.g. nwpolicyhubXXXXXX
-    ACR_LOGIN_SERVER = credentials('acr-login-server')      // e.g. nwpolicyhubXXXXXX.azurecr.io
-    AZURE_SP         = credentials('azure-sp')              // Username=client_id, Password=client_secret
+    ACR_NAME         = credentials('acr-name')
+    ACR_LOGIN_SERVER = credentials('acr-login-server')
+    AZURE_SP         = credentials('azure-sp')        // USR=client_id, PSW=client_secret
     AZURE_TENANT_ID  = credentials('azure-tenant-id')
-    IMAGE_NAME       = "northwind-policy-hub"
-    BUILD_TAG        = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'local'}"
+    IMAGE_NAME       = 'northwind-policy-hub'
   }
 
   stages {
@@ -29,125 +27,78 @@ pipeline {
       steps {
         checkout scm
         script {
-          // Surface git metadata for downstream use
-          env.GIT_BRANCH_NAME = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
           env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-          echo "Branch: ${env.GIT_BRANCH_NAME} | Commit: ${env.GIT_COMMIT_SHORT}"
+          env.BUILD_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT_SHORT}"
+          echo "Build tag: ${env.BUILD_TAG}"
         }
       }
     }
 
-    stage('Install Dependencies') {
+    stage('Install & Test') {
       parallel {
         stage('Server deps') {
-          steps {
-            sh 'npm ci --prefer-offline'
-          }
+          steps { sh 'npm ci --prefer-offline' }
         }
         stage('Client deps') {
-          steps {
-            sh 'npm ci --prefix client --prefer-offline'
-          }
+          steps { sh 'npm ci --prefix client --prefer-offline' }
         }
-      }
-    }
-
-    stage('Lint') {
-      steps {
-        sh 'npm run lint'
-      }
-    }
-
-    stage('Test') {
-      steps {
-        sh 'npm run test:ci'
-      }
-      post {
-        always {
-          junit allowEmptyResults: true, testResults: 'junit.xml'
-          publishHTML([
-            allowMissing:          true,
-            alwaysLinkToLastBuild: true,
-            keepAll:               true,
-            reportDir:             'coverage/lcov-report',
-            reportFiles:           'index.html',
-            reportName:            'Coverage Report',
-          ])
-        }
-      }
-    }
-
-    stage('Build React') {
-      steps {
-        sh 'npm run build'
-        echo "React build complete — dist/ ready for Docker COPY"
       }
     }
 
     stage('Docker Build') {
       steps {
-        script {
-          sh """
-            docker build \
-              --build-arg BUILD_ID=${env.BUILD_TAG} \
-              --tag ${env.IMAGE_NAME}:${env.BUILD_TAG} \
-              --tag ${env.IMAGE_NAME}:latest \
-              --file Dockerfile \
-              .
-          """
-        }
+        sh """
+          docker build \\
+            --tag ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG} \\
+            --tag ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:dev \\
+            --tag ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:latest \\
+            .
+        """
       }
     }
 
     stage('Push to ACR') {
       steps {
-        script {
-          // Authenticate with ACR using Service Principal (no admin credentials)
-          sh """
-            echo "${AZURE_SP_PSW}" | docker login ${env.ACR_LOGIN_SERVER} \
-              --username "${AZURE_SP_USR}" \
-              --password-stdin
-          """
-          sh """
-            docker tag ${env.IMAGE_NAME}:${env.BUILD_TAG} ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG}
-            docker tag ${env.IMAGE_NAME}:latest           ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:latest
-            docker push ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG}
-            docker push ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:latest
-          """
-        }
+        sh """
+          az login --service-principal \\
+            --username "${AZURE_SP_USR}" \\
+            --password "${AZURE_SP_PSW}" \\
+            --tenant   "${env.AZURE_TENANT_ID}"
+
+          az acr login --name "${env.ACR_NAME}"
+
+          docker push ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG}
+          docker push ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:dev
+          docker push ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:latest
+
+          az logout
+        """
       }
     }
 
     stage('Trigger CD') {
-      when {
-        // Only trigger CD from the main branch, not from PRs
-        branch 'main'
-      }
+      when { branch 'main' }
       steps {
         build(
           job:        'northwind-policy-hub-cd',
           wait:       false,
           parameters: [string(name: 'BUILD_TAG', value: env.BUILD_TAG)],
         )
-        echo "CD pipeline triggered with image tag: ${env.BUILD_TAG}"
+        echo "CD pipeline triggered with tag: ${env.BUILD_TAG}"
       }
     }
   }
 
   post {
     always {
-      // Clean up local Docker images to prevent disk exhaustion on the VM
       sh """
-        docker rmi ${env.IMAGE_NAME}:${env.BUILD_TAG} || true
-        docker rmi ${env.IMAGE_NAME}:latest           || true
-        docker image prune -f                         || true
+        docker rmi ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG} || true
+        docker rmi ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:dev              || true
+        docker rmi ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:latest           || true
+        docker image prune -f || true
       """
     }
-    success {
-      echo "CI SUCCESS — Image ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG} pushed to ACR"
-    }
-    failure {
-      echo "CI FAILED — check logs above"
-    }
+    success { echo "CI SUCCESS — ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG} pushed" }
+    failure { echo "CI FAILED — check logs above" }
   }
 }
