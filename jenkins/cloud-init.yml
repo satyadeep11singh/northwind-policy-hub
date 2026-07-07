@@ -1,0 +1,89 @@
+#cloud-config
+# ── NorthWind Policy Hub — Jenkins VM provisioning ───────────────────────────
+# This cloud-init script runs once on first boot of the Jenkins Azure VM.
+# It installs: Jenkins LTS, Docker CE, Azure CLI, Node.js 20, and configures
+# Jenkins to be ready for pipeline execution.
+# Boot time: approximately 8-12 minutes on Standard_B2s
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - unzip
+  - jq
+  - git
+  - fontconfig
+  - openjdk-17-jdk
+
+write_files:
+  - path: /etc/jenkins-ready.flag
+    content: |
+      Jenkins provisioning started by cloud-init
+
+runcmd:
+  # ── Docker CE ─────────────────────────────────────────────────────────────
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+  - apt-get update -qq
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+  # ── Jenkins LTS ───────────────────────────────────────────────────────────
+  - curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+  - echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" > /etc/apt/sources.list.d/jenkins.list
+  - apt-get update -qq
+  - apt-get install -y jenkins
+
+  # ── Node.js 20 (via NodeSource) ───────────────────────────────────────────
+  - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  - apt-get install -y nodejs
+
+  # ── Azure CLI ─────────────────────────────────────────────────────────────
+  - curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+
+  # ── Add jenkins user to docker group (so pipeline can run docker commands) ─
+  - usermod -aG docker jenkins
+
+  # ── Start and enable Jenkins ──────────────────────────────────────────────
+  - systemctl enable jenkins
+  - systemctl start jenkins
+
+  # ── Configure Docker to start on boot ────────────────────────────────────
+  - systemctl enable docker
+  - systemctl start docker
+
+  # ── Wait for Jenkins to be ready and capture initial admin password ───────
+  - |
+    for i in $(seq 1 30); do
+      if [ -f /var/lib/jenkins/secrets/initialAdminPassword ]; then
+        echo "Jenkins initial admin password:" >> /var/log/cloud-init-jenkins.log
+        cat /var/lib/jenkins/secrets/initialAdminPassword >> /var/log/cloud-init-jenkins.log
+        break
+      fi
+      sleep 10
+    done
+
+  # ── Mark provisioning complete ────────────────────────────────────────────
+  - echo "cloud-init complete $(date)" > /etc/jenkins-ready.flag
+
+final_message: |
+  NorthWind Jenkins VM provisioning complete.
+  Jenkins UI: http://<public-ip>:8080
+  Initial password: cat /var/log/cloud-init-jenkins.log  (or /var/lib/jenkins/secrets/initialAdminPassword)
+  Required Jenkins plugins to install manually:
+    - Pipeline, Git, Docker Pipeline, Credentials Binding,
+      JUnit, HTML Publisher, Blue Ocean (optional)
+  Jenkins credentials to configure (Manage Jenkins > Credentials):
+    - azure-sp              (Username/Password: client_id / client_secret)
+    - azure-tenant-id       (Secret text)
+    - azure-subscription-id (Secret text)
+    - azure-resource-group  (Secret text)
+    - acr-name              (Secret text)
+    - acr-login-server      (Secret text)
+    - webapp-name           (Secret text)
