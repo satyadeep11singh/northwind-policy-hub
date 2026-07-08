@@ -19,7 +19,6 @@ pipeline {
     AZURE_SP         = credentials('azure-sp')        // USR=client_id, PSW=client_secret
     AZURE_TENANT_ID  = credentials('azure-tenant-id')
     IMAGE_NAME       = 'northwind-policy-hub'
-    PATH             = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   }
 
   stages {
@@ -31,17 +30,6 @@ pipeline {
           env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
           env.BUILD_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT_SHORT}"
           echo "Build tag: ${env.BUILD_TAG}"
-        }
-      }
-    }
-
-    stage('Install & Test') {
-      parallel {
-        stage('Server deps') {
-          steps { sh 'npm ci --prefer-offline' }
-        }
-        stage('Client deps') {
-          steps { sh 'npm ci --prefix client --prefer-offline' }
         }
       }
     }
