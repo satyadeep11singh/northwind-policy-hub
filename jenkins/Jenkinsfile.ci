@@ -19,6 +19,7 @@ pipeline {
     AZURE_SP         = credentials('azure-sp')        // USR=client_id, PSW=client_secret
     AZURE_TENANT_ID  = credentials('azure-tenant-id')
     IMAGE_NAME       = 'northwind-policy-hub'
+    PATH             = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   }
 
   stages {
