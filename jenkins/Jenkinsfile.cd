@@ -163,7 +163,7 @@ pipeline {
 
   post {
     always {
-      node {
+      node('built-in') {
         sh 'az logout || true'
       }
     }
