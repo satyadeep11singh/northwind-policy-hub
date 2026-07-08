@@ -1,11 +1,11 @@
 variable "location" {
   description = "Azure region for all resources"
   type        = string
-  default     = "canadacentral"
+  default     = "australiaeast"
 }
 
 variable "environment" {
-  description = "Deployment environment (dev | staging | prod)"
+  description = "Deployment environment"
   type        = string
   default     = "dev"
 
@@ -15,26 +15,24 @@ variable "environment" {
   }
 }
 
-variable "jenkins_admin_username" {
-  description = "Admin username for Jenkins VM"
-  type        = string
-  default     = "azureuser"
-}
-
-variable "jenkins_admin_password" {
-  description = "Admin password for Jenkins VM (set via TF_VAR_ env var or CI secret)"
-  type        = string
-  sensitive   = true
-}
-
 variable "mongodb_uri" {
-  description = "MongoDB Atlas connection string (stored in Key Vault)"
+  description = "MongoDB Atlas connection string"
   type        = string
   sensitive   = true
 }
 
 variable "jwt_secret" {
-  description = "JWT signing secret (min 32 chars, stored in Key Vault)"
+  description = "JWT signing secret"
   type        = string
   sensitive   = true
+}
+
+variable "jenkins_ssh_public_key" {
+  description = "SSH public key for the Jenkins VM (contents of ~/.ssh/id_rsa.pub or similar)"
+  type        = string
+}
+
+variable "jenkins_sp_object_id" {
+  description = "Object ID of the Service Principal used by Jenkins (for AcrPush role assignment)"
+  type        = string
 }

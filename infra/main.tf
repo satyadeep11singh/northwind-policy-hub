@@ -12,7 +12,6 @@ terraform {
     }
   }
 
-  # Reuse the shared tfstate backend from the northwind project suite
   backend "azurerm" {
     resource_group_name  = "rg-northwind-tfstate"
     storage_account_name = "stnorthwindtf676746"
@@ -23,6 +22,9 @@ terraform {
 
 provider "azurerm" {
   features {
+    resource_group {
+      prevent_deletion_if_contains_resources = false
+    }
     key_vault {
       purge_soft_delete_on_destroy    = false
       recover_soft_deleted_key_vaults = true
@@ -36,19 +38,6 @@ resource "random_id" "suffix" {
   byte_length = 3
 }
 
-# ── Resource groups ────────────────────────────────────────────────────────────
-resource "azurerm_resource_group" "app" {
-  name     = "rg-northwind-policy-hub-${var.environment}"
-  location = var.location
-  tags     = local.common_tags
-}
-
-resource "azurerm_resource_group" "jenkins" {
-  name     = "rg-northwind-jenkins-${var.environment}"
-  location = var.location
-  tags     = local.common_tags
-}
-
 locals {
   common_tags = {
     project     = "northwind-policy-hub"
@@ -58,87 +47,174 @@ locals {
   suffix = random_id.suffix.hex
 }
 
-# ── Modules ────────────────────────────────────────────────────────────────────
+# ── Resource Group ─────────────────────────────────────────────────────────────
+resource "azurerm_resource_group" "app" {
+  name     = "rg-northwind-policy-hub-${var.environment}"
+  location = var.location
+  tags     = local.common_tags
+}
 
-module "acr" {
-  source              = "./modules/acr"
+# ── Azure Container Registry ───────────────────────────────────────────────────
+resource "azurerm_container_registry" "acr" {
+  name                = "acrnwpolicyhub${local.suffix}"
   resource_group_name = azurerm_resource_group.app.name
   location            = var.location
-  suffix              = local.suffix
+  sku                 = "Basic"
+  admin_enabled       = false
   tags                = local.common_tags
 }
 
-module "app_insights" {
-  source              = "./modules/app_insights"
+# ── Networking (Jenkins VM) ────────────────────────────────────────────────────
+resource "azurerm_virtual_network" "jenkins" {
+  name                = "vnet-nw-policy-hub-${local.suffix}"
   resource_group_name = azurerm_resource_group.app.name
   location            = var.location
-  suffix              = local.suffix
+  address_space       = ["10.0.0.0/16"]
   tags                = local.common_tags
 }
 
-module "key_vault" {
-  source              = "./modules/key_vault"
+resource "azurerm_subnet" "jenkins" {
+  name                 = "snet-jenkins"
+  resource_group_name  = azurerm_resource_group.app.name
+  virtual_network_name = azurerm_virtual_network.jenkins.name
+  address_prefixes     = ["10.0.1.0/24"]
+}
+
+resource "azurerm_network_security_group" "jenkins" {
+  name                = "nsg-jenkins-${local.suffix}"
   resource_group_name = azurerm_resource_group.app.name
   location            = var.location
-  suffix              = local.suffix
-  tenant_id           = data.azurerm_client_config.current.tenant_id
-  deployer_object_id  = data.azurerm_client_config.current.object_id
   tags                = local.common_tags
+
+  # SSH
+  security_rule {
+    name                       = "AllowSSH"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  # Jenkins UI
+  security_rule {
+    name                       = "AllowJenkinsUI"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "8080"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
 }
 
-module "container_apps" {
-  source                     = "./modules/container_apps"
-  resource_group_name        = azurerm_resource_group.app.name
-  location                   = var.location
-  suffix                     = local.suffix
-  acr_login_server           = module.acr.login_server
-  acr_name                   = module.acr.name
-  key_vault_uri              = module.key_vault.vault_uri
-  app_insights_conn          = module.app_insights.connection_string
-  log_analytics_workspace_id = module.app_insights.log_analytics_workspace_id
-  tags                       = local.common_tags
-
-  depends_on = [module.acr, module.key_vault, module.app_insights]
+resource "azurerm_subnet_network_security_group_association" "jenkins" {
+  subnet_id                 = azurerm_subnet.jenkins.id
+  network_security_group_id = azurerm_network_security_group.jenkins.id
 }
 
-module "jenkins_vm" {
-  source              = "./modules/jenkins_vm"
-  resource_group_name = azurerm_resource_group.jenkins.name
+resource "azurerm_public_ip" "jenkins" {
+  name                = "pip-jenkins-${local.suffix}"
+  resource_group_name = azurerm_resource_group.app.name
   location            = var.location
-  suffix              = local.suffix
-  admin_username      = var.jenkins_admin_username
-  admin_password      = var.jenkins_admin_password
+  allocation_method   = "Static"
+  sku                 = "Standard"
   tags                = local.common_tags
 }
 
-# ── Key Vault secrets (populated after initial deploy) ────────────────────────
+resource "azurerm_network_interface" "jenkins" {
+  name                = "nic-jenkins-${local.suffix}"
+  resource_group_name = azurerm_resource_group.app.name
+  location            = var.location
+  tags                = local.common_tags
 
-resource "azurerm_key_vault_secret" "mongodb_uri" {
-  name         = "mongodb-uri"
-  value        = var.mongodb_uri
-  key_vault_id = module.key_vault.vault_id
-  tags         = local.common_tags
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.jenkins.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.jenkins.id
+  }
 }
 
-resource "azurerm_key_vault_secret" "jwt_secret" {
-  name         = "jwt-secret"
-  value        = var.jwt_secret
-  key_vault_id = module.key_vault.vault_id
-  tags         = local.common_tags
+# ── Jenkins VM ─────────────────────────────────────────────────────────────────
+resource "azurerm_linux_virtual_machine" "jenkins" {
+  name                  = "vm-nw-jenkins-${local.suffix}"
+  resource_group_name   = azurerm_resource_group.app.name
+  location              = var.location
+  size                  = "Standard_B2s"
+  admin_username        = "azureuser"
+  network_interface_ids = [azurerm_network_interface.jenkins.id]
+  tags                  = local.common_tags
+
+  admin_ssh_key {
+    username   = "azureuser"
+    public_key = var.jenkins_ssh_public_key
+  }
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+    disk_size_gb         = 64
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts-gen2"
+    version   = "latest"
+  }
+
+  custom_data = base64encode(file("${path.module}/../jenkins/cloud-init.yml"))
 }
 
-resource "azurerm_key_vault_secret" "appinsights_conn" {
-  name         = "appinsights-connection-string"
-  value        = module.app_insights.connection_string
-  key_vault_id = module.key_vault.vault_id
-  tags         = local.common_tags
+# ── Service Principal → ACR push permission (for Jenkins) ─────────────────────
+resource "azurerm_role_assignment" "jenkins_acr_push" {
+  scope                = azurerm_container_registry.acr.id
+  role_definition_name = "AcrPush"
+  principal_id         = var.jenkins_sp_object_id
 }
 
-# ── Grant the shared UAI (used by all container apps) access to Key Vault ────
-resource "azurerm_key_vault_access_policy" "container_app" {
-  key_vault_id = module.key_vault.vault_id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = module.container_apps.uai_principal_id
+# ── App Service Plan (F1 Free Linux) ──────────────────────────────────────────
+resource "azurerm_service_plan" "plan" {
+  name                = "asp-nw-policy-hub-${local.suffix}"
+  resource_group_name = azurerm_resource_group.app.name
+  location            = var.location
+  os_type             = "Linux"
+  sku_name            = "F1"
+  tags                = local.common_tags
+}
 
-  secret_permissions = ["Get", "List"]
+# ── Linux Web App ──────────────────────────────────────────────────────────────
+resource "azurerm_linux_web_app" "app" {
+  name                = "nw-policy-hub-${local.suffix}"
+  resource_group_name = azurerm_resource_group.app.name
+  location            = var.location
+  service_plan_id     = azurerm_service_plan.plan.id
+  https_only          = true
+  tags                = local.common_tags
+
+  site_config {
+    always_on = false
+
+    application_stack {
+      node_version = "20-lts"
+    }
+
+    app_command_line = "node server/index.js"
+  }
+
+  app_settings = {
+    NODE_ENV                       = "production"
+    PORT                           = "8080"
+    MONGODB_URI                    = var.mongodb_uri
+    JWT_SECRET                     = var.jwt_secret
+    JWT_EXPIRES_IN                 = "8h"
+    WEBSITES_PORT                  = "8080"
+    SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
+  }
 }

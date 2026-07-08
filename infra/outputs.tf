@@ -1,47 +1,34 @@
 output "app_url" {
-  description = "Production Container App URL"
-  value       = "https://${module.container_apps.prod_fqdn}"
+  description = "App Service URL"
+  value       = "https://${azurerm_linux_web_app.app.default_hostname}"
 }
 
-output "app_dev_url" {
-  description = "Dev Container App URL"
-  value       = "https://${module.container_apps.dev_fqdn}"
+output "app_name" {
+  description = "App Service name (for az webapp deploy)"
+  value       = azurerm_linux_web_app.app.name
 }
 
-output "app_staging_url" {
-  description = "Staging Container App URL"
-  value       = "https://${module.container_apps.staging_fqdn}"
-}
-
-output "prod_app_name" {
-  value = module.container_apps.prod_app_name
-}
-
-output "acr_login_server" {
-  description = "ACR login server for Docker push/pull"
-  value       = module.acr.login_server
+output "resource_group" {
+  description = "Resource group name"
+  value       = azurerm_resource_group.app.name
 }
 
 output "acr_name" {
-  value = module.acr.name
+  description = "ACR name (set as Jenkins credential acr-name)"
+  value       = azurerm_container_registry.acr.name
 }
 
-output "key_vault_uri" {
-  description = "Key Vault URI for app configuration"
-  value       = module.key_vault.vault_uri
+output "acr_login_server" {
+  description = "ACR login server (set as Jenkins credential acr-login-server)"
+  value       = azurerm_container_registry.acr.login_server
 }
 
 output "jenkins_public_ip" {
-  description = "Public IP of Jenkins VM"
-  value       = module.jenkins_vm.public_ip
+  description = "Jenkins VM public IP — open http://<ip>:8080 after cloud-init finishes (~10 min)"
+  value       = azurerm_public_ip.jenkins.ip_address
 }
 
-output "app_insights_connection_string" {
-  description = "Application Insights connection string"
-  value       = module.app_insights.connection_string
-  sensitive   = true
-}
-
-output "resource_group_app" {
-  value = azurerm_resource_group.app.name
+output "jenkins_ssh" {
+  description = "SSH command to connect to Jenkins VM"
+  value       = "ssh azureuser@${azurerm_public_ip.jenkins.ip_address}"
 }
