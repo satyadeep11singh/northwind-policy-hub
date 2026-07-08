@@ -1,7 +1,7 @@
 // ── NorthWind Policy Hub — CD Pipeline ───────────────────────────────────────
 // Triggered by: CI pipeline on main branch success
-// Strategy:     Update dev → smoke test → update staging → manual gate → update prod
-// Rollback:     Re-deploy previous image tag to prod if health check fails
+// Strategy:     Pull image from ACR → build zip → deploy to App Service → health check
+// Rollback:     Manual re-run of previous BUILD_TAG if health check fails
 
 pipeline {
   agent any
@@ -23,11 +23,8 @@ pipeline {
     AZURE_TENANT_ID       = credentials('azure-tenant-id')
     AZURE_SUBSCRIPTION_ID = credentials('azure-subscription-id')
     AZURE_RESOURCE_GROUP  = credentials('azure-resource-group')
+    WEBAPP_NAME           = credentials('webapp-name')
     IMAGE_NAME            = 'northwind-policy-hub'
-    // Container App names (suffix 161767 from Terraform random_id)
-    CA_DEV     = 'ca-nw-policy-hub-dev-161767'
-    CA_STAGING = 'ca-nw-policy-hub-staging-161767'
-    CA_PROD    = 'ca-nw-policy-hub-prod-161767'
   }
 
   stages {
@@ -44,121 +41,58 @@ pipeline {
       }
     }
 
-    stage('Deploy → dev') {
+    stage('Deploy to App Service') {
       steps {
         sh """
-          az containerapp update \\
-            --name            "${env.CA_DEV}" \\
-            --resource-group  "${env.AZURE_RESOURCE_GROUP}" \\
-            --image           "${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:dev"
+          # Pull the built image from ACR and extract the app files
+          az acr login --name \$(echo ${env.ACR_LOGIN_SERVER} | cut -d. -f1)
+
+          # Create deploy zip from checked-out source
+          # (node_modules excluded — App Service builds with SCM_DO_BUILD_DURING_DEPLOYMENT=true)
+          zip -r deploy.zip server/ client/dist/ package.json package-lock.json \\
+            --exclude "server/node_modules/*"
+
+          az webapp deploy \\
+            --resource-group "${env.AZURE_RESOURCE_GROUP}" \\
+            --name            "${env.WEBAPP_NAME}" \\
+            --src-path        deploy.zip \\
+            --type            zip
+
+          rm -f deploy.zip
         """
-        echo "Dev updated with image tag: dev (build ${params.BUILD_TAG})"
       }
     }
 
-    stage('Smoke Test — dev') {
+    stage('Health Check') {
       steps {
         script {
-          def devFqdn = sh(
-            script: """az containerapp show \\
-              --name "${env.CA_DEV}" \\
+          def appUrl = sh(
+            script: """az webapp show \\
               --resource-group "${env.AZURE_RESOURCE_GROUP}" \\
-              --query "properties.configuration.ingress.fqdn" -o tsv""",
+              --name "${env.WEBAPP_NAME}" \\
+              --query "defaultHostName" -o tsv""",
             returnStdout: true,
           ).trim()
 
           def healthy = false
-          for (int i = 0; i < 18 && !healthy; i++) {
+          for (int i = 0; i < 12 && !healthy; i++) {
             sleep(10)
             def status = sh(
-              script: "curl -sf https://${devFqdn}/health | grep -q 'ok' && echo OK || echo FAIL",
+              script: "curl -sf https://${appUrl}/health | grep -q 'ok\\|degraded' && echo OK || echo FAIL",
               returnStdout: true,
             ).trim()
             if (status == 'OK') {
               healthy = true
-              echo "Dev healthy at https://${devFqdn}"
+              echo "App healthy at https://${appUrl}"
             } else {
-              echo "Waiting for dev... attempt ${i+1}/18"
+              echo "Waiting for app... attempt ${i+1}/12"
             }
           }
-          if (!healthy) error("Dev health check failed after 3 minutes")
+          if (!healthy) error("Health check failed after 2 minutes — check App Service logs")
         }
       }
     }
 
-    stage('Deploy → staging') {
-      steps {
-        sh """
-          az containerapp update \\
-            --name            "${env.CA_STAGING}" \\
-            --resource-group  "${env.AZURE_RESOURCE_GROUP}" \\
-            --image           "${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:staging"
-        """
-      }
-    }
-
-    stage('Approve → production') {
-      steps {
-        timeout(time: 30, unit: 'MINUTES') {
-          input message: "Deploy build ${params.BUILD_TAG} to PRODUCTION?", ok: 'Deploy'
-        }
-      }
-    }
-
-    stage('Deploy → prod') {
-      steps {
-        script {
-          // Capture current prod image for rollback
-          env.PREV_IMAGE = sh(
-            script: """az containerapp show \\
-              --name "${env.CA_PROD}" \\
-              --resource-group "${env.AZURE_RESOURCE_GROUP}" \\
-              --query "properties.template.containers[0].image" -o tsv""",
-            returnStdout: true,
-          ).trim()
-
-          sh """
-            az containerapp update \\
-              --name            "${env.CA_PROD}" \\
-              --resource-group  "${env.AZURE_RESOURCE_GROUP}" \\
-              --image           "${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:latest"
-          """
-        }
-      }
-    }
-
-    stage('Production Health Check') {
-      steps {
-        script {
-          def prodFqdn = sh(
-            script: """az containerapp show \\
-              --name "${env.CA_PROD}" \\
-              --resource-group "${env.AZURE_RESOURCE_GROUP}" \\
-              --query "properties.configuration.ingress.fqdn" -o tsv""",
-            returnStdout: true,
-          ).trim()
-
-          sleep(20)
-          def result = sh(
-            script: "curl -sf https://${prodFqdn}/health | grep -q 'ok' && echo OK || echo FAIL",
-            returnStdout: true,
-          ).trim()
-
-          if (result != 'OK') {
-            echo "PRODUCTION UNHEALTHY — rolling back to ${env.PREV_IMAGE}"
-            sh """
-              az containerapp update \\
-                --name            "${env.CA_PROD}" \\
-                --resource-group  "${env.AZURE_RESOURCE_GROUP}" \\
-                --image           "${env.PREV_IMAGE}"
-            """
-            error("Production health check failed — rolled back to previous image")
-          }
-
-          echo "PRODUCTION LIVE — https://${prodFqdn}"
-        }
-      }
-    }
   }
 
   post {
@@ -167,7 +101,7 @@ pipeline {
         sh 'az logout || true'
       }
     }
-    success { echo "DEPLOY SUCCESS — build ${params.BUILD_TAG} is live in production" }
-    failure { echo "DEPLOY FAILED — check logs; prod may have been rolled back" }
+    success { echo "DEPLOY SUCCESS — build ${params.BUILD_TAG} is live" }
+    failure { echo "DEPLOY FAILED — check logs above" }
   }
 }

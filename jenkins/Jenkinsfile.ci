@@ -1,7 +1,6 @@
 // ── NorthWind Policy Hub — CI Pipeline ───────────────────────────────────────
 // Triggered by: GitHub webhook on push to main
-// Produces:     Docker image pushed to ACR tagged with build number + git SHA
-// Passes to CD: BUILD_TAG environment variable via downstream trigger
+// Stages:       Checkout → Install & Test → Docker Build → Trivy Scan → Push to ACR → Trigger CD
 
 pipeline {
   agent any
@@ -14,11 +13,10 @@ pipeline {
   }
 
   environment {
+    IMAGE_NAME       = 'northwind-policy-hub'
     ACR_NAME         = credentials('acr-name')
     ACR_LOGIN_SERVER = credentials('acr-login-server')
-    AZURE_SP         = credentials('azure-sp')        // USR=client_id, PSW=client_secret
     AZURE_TENANT_ID  = credentials('azure-tenant-id')
-    IMAGE_NAME       = 'northwind-policy-hub'
   }
 
   stages {
@@ -34,34 +32,61 @@ pipeline {
       }
     }
 
+    stage('Install & Test') {
+      steps {
+        sh 'npm ci'
+        sh 'npm run test:ci'
+      }
+      post {
+        always {
+          junit testResults: 'junit.xml', allowEmptyResults: true
+        }
+      }
+    }
+
     stage('Docker Build') {
       steps {
         sh """
           docker build \\
+            --build-arg BUILD_ID=${env.BUILD_TAG} \\
             --tag ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG} \\
-            --tag ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:dev \\
             --tag ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:latest \\
             .
         """
       }
     }
 
-    stage('Push to ACR') {
+    stage('Trivy Scan') {
       steps {
         sh """
-          az login --service-principal \\
-            --username "${AZURE_SP_USR}" \\
-            --password "${AZURE_SP_PSW}" \\
-            --tenant   "${env.AZURE_TENANT_ID}"
-
-          az acr login --name "${env.ACR_NAME}"
-
-          docker push ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG}
-          docker push ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:dev
-          docker push ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:latest
-
-          az logout
+          trivy image \\
+            --severity CRITICAL,HIGH \\
+            --exit-code 1 \\
+            --no-progress \\
+            --ignorefile .trivyignore \\
+            ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG}
         """
+      }
+    }
+
+    stage('Push to ACR') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'azure-sp',
+            usernameVariable: 'AZ_SP_ID', passwordVariable: 'AZ_SP_SECRET')]) {
+          sh """
+            az login --service-principal \\
+              --username "\$AZ_SP_ID" \\
+              --password "\$AZ_SP_SECRET" \\
+              --tenant   "${env.AZURE_TENANT_ID}"
+
+            az acr login --name "${env.ACR_NAME}"
+
+            docker push ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG}
+            docker push ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:latest
+
+            az logout
+          """
+        }
       }
     }
 
@@ -75,6 +100,7 @@ pipeline {
         echo "CD pipeline triggered with tag: ${env.BUILD_TAG}"
       }
     }
+
   }
 
   post {
@@ -82,13 +108,12 @@ pipeline {
       node('built-in') {
         sh """
           docker rmi ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG} || true
-          docker rmi ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:dev              || true
-          docker rmi ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:latest           || true
-          docker image prune -f || true
+          docker rmi ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:latest            || true
+          docker image prune -f                                                  || true
         """
       }
     }
-    success { echo "CI SUCCESS — ${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${env.BUILD_TAG} pushed" }
+    success { echo "CI SUCCESS — ${env.IMAGE_NAME}:${env.BUILD_TAG} pushed to ACR" }
     failure { echo "CI FAILED — check logs above" }
   }
 }

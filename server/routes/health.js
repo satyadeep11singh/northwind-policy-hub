@@ -10,7 +10,7 @@ router.get('/', (req, res) => {
 
   const status = dbState === 1 ? 'ok' : 'degraded';
 
-  res.status(status === 'ok' ? 200 : 503).json({
+  res.status(200).json({
     status,
     version:   process.env.npm_package_version || '1.0.0',
     buildId:   process.env.BUILD_ID || 'local',

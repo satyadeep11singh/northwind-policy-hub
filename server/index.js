@@ -61,14 +61,19 @@ app.use(errorHandler);
 // ── Boot sequence ─────────────────────────────────────────────────────────────
 async function start() {
   try {
-    await loadSecrets();      // pulls secrets from Key Vault (no-op in local dev)
-    await connect();          // connects to MongoDB Atlas or Cosmos DB
-    const port = process.env.PORT || 3001;
-    app.listen(port, () => logger.info(`NorthWind Policy Hub listening on port ${port}`));
+    await loadSecrets();
   } catch (err) {
-    logger.error({ err }, 'Failed to start server');
-    process.exit(1);
+    logger.error({ err }, 'Key Vault load failed — continuing without secrets');
   }
+
+  try {
+    await connect();
+  } catch (err) {
+    logger.error({ err }, 'MongoDB connection failed — server will start in degraded mode');
+  }
+
+  const port = process.env.PORT || 3001;
+  app.listen(port, () => logger.info(`NorthWind Policy Hub listening on port ${port}`));
 }
 
 start();

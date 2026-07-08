@@ -50,6 +50,9 @@ runcmd:
   # ── Azure CLI ─────────────────────────────────────────────────────────────
   - curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
+  # ── Trivy (image vulnerability scanner) ──────────────────────────────────
+  - curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
   # ── Add jenkins user to docker group (so pipeline can run docker commands) ─
   - usermod -aG docker jenkins
 

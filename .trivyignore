@@ -1,0 +1,7 @@
+# CVE suppressions for northwind-policy-hub
+#
+# Add CVEs here only when:
+#   1. The fix is not yet available in the base image, AND
+#   2. The vulnerability is not exploitable in this app's context
+#
+# Each entry must include a comment explaining why it is suppressed.
