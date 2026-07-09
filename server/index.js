@@ -25,6 +25,9 @@ const healthRoutes  = require('./routes/health');
 
 const app = express();
 
+// App Service (and any reverse proxy) sets X-Forwarded-For — trust one hop
+app.set('trust proxy', 1);
+
 // ── Security & utility middleware ─────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: {
