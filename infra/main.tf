@@ -146,7 +146,7 @@ resource "azurerm_linux_virtual_machine" "jenkins" {
   name                  = "vm-nw-jenkins-${local.suffix}"
   resource_group_name   = azurerm_resource_group.app.name
   location              = var.location
-  size                  = "Standard_B2s"
+  size                  = "Standard_B2s_v2"
   admin_username        = "azureuser"
   network_interface_ids = [azurerm_network_interface.jenkins.id]
   tags                  = local.common_tags
