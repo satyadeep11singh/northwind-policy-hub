@@ -64,6 +64,9 @@ runcmd:
   - systemctl enable docker
   - systemctl start docker
 
+  # ── Restart Jenkins so it picks up the docker group membership ────────────
+  - systemctl restart jenkins
+
   # ── Wait for Jenkins to be ready and capture initial admin password ───────
   - |
     for i in $(seq 1 30); do
