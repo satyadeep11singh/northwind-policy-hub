@@ -32,3 +32,14 @@ output "jenkins_ssh" {
   description = "SSH command to connect to Jenkins VM"
   value       = "ssh azureuser@${azurerm_public_ip.jenkins.ip_address}"
 }
+
+output "app_insights_name" {
+  description = "Application Insights resource name"
+  value       = azurerm_application_insights.main.name
+}
+
+output "app_insights_instrumentation_key" {
+  description = "Application Insights instrumentation key"
+  value       = azurerm_application_insights.main.instrumentation_key
+  sensitive   = true
+}

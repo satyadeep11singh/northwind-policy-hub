@@ -179,6 +179,25 @@ resource "azurerm_role_assignment" "jenkins_acr_push" {
   principal_id         = var.jenkins_sp_object_id
 }
 
+# ── Application Insights ──────────────────────────────────────────────────────
+resource "azurerm_log_analytics_workspace" "main" {
+  name                = "law-nw-policy-hub-${local.suffix}"
+  resource_group_name = azurerm_resource_group.app.name
+  location            = var.location
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+  tags                = local.common_tags
+}
+
+resource "azurerm_application_insights" "main" {
+  name                = "ai-nw-policy-hub-${local.suffix}"
+  resource_group_name = azurerm_resource_group.app.name
+  location            = var.location
+  workspace_id        = azurerm_log_analytics_workspace.main.id
+  application_type    = "Node.JS"
+  tags                = local.common_tags
+}
+
 # ── App Service Plan (F1 Free Linux) ──────────────────────────────────────────
 resource "azurerm_service_plan" "plan" {
   name                = "asp-nw-policy-hub-${local.suffix}"
@@ -209,12 +228,13 @@ resource "azurerm_linux_web_app" "app" {
   }
 
   app_settings = {
-    NODE_ENV                       = "production"
-    PORT                           = "8080"
-    MONGODB_URI                    = var.mongodb_uri
-    JWT_SECRET                     = var.jwt_secret
-    JWT_EXPIRES_IN                 = "8h"
-    WEBSITES_PORT                  = "8080"
-    SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
+    NODE_ENV                                 = "production"
+    PORT                                     = "8080"
+    MONGODB_URI                              = var.mongodb_uri
+    JWT_SECRET                               = var.jwt_secret
+    JWT_EXPIRES_IN                           = "8h"
+    WEBSITES_PORT                            = "8080"
+    SCM_DO_BUILD_DURING_DEPLOYMENT           = "true"
+    APPLICATIONINSIGHTS_CONNECTION_STRING    = azurerm_application_insights.main.connection_string
   }
 }
