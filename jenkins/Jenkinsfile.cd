@@ -45,21 +45,25 @@ pipeline {
 
     stage('Deploy to App Service') {
       steps {
-        sh """
-          # App Service is in container mode — update the image tag and restart.
-          # The web app's system-assigned managed identity already has AcrPull on ACR
-          # (assigned by Terraform), so --acr-use-identity handles the pull auth.
-          az webapp config container set \\
-            --resource-group "${env.AZURE_RESOURCE_GROUP}" \\
-            --name            "${env.WEBAPP_NAME}" \\
-            --docker-custom-image-name "${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${params.BUILD_TAG}" \\
-            --docker-registry-server-url "https://${env.ACR_LOGIN_SERVER}" \\
-            --acr-use-identity
+        withCredentials([usernamePassword(credentialsId: 'azure-sp',
+            usernameVariable: 'AZ_SP_ID', passwordVariable: 'AZ_SP_SECRET')]) {
+          sh """
+            # App Service is in container mode — update the image tag and restart.
+            # SP has AcrPush on the registry (includes pull); az CLI 2.88 does not
+            # support --acr-use-identity, so we pass SP creds as registry credentials.
+            az webapp config container set \\
+              --resource-group "${env.AZURE_RESOURCE_GROUP}" \\
+              --name            "${env.WEBAPP_NAME}" \\
+              --docker-custom-image-name "${env.ACR_LOGIN_SERVER}/${env.IMAGE_NAME}:${params.BUILD_TAG}" \\
+              --docker-registry-server-url "https://${env.ACR_LOGIN_SERVER}" \\
+              --container-registry-user   "\$AZ_SP_ID" \\
+              --container-registry-password "\$AZ_SP_SECRET"
 
-          az webapp restart \\
-            --resource-group "${env.AZURE_RESOURCE_GROUP}" \\
-            --name            "${env.WEBAPP_NAME}"
-        """
+            az webapp restart \\
+              --resource-group "${env.AZURE_RESOURCE_GROUP}" \\
+              --name            "${env.WEBAPP_NAME}"
+          """
+        }
       }
     }
 
