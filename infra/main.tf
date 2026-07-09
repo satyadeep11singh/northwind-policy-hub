@@ -213,6 +213,60 @@ resource "azurerm_application_insights_workbook" "main" {
   tags                = local.common_tags
 }
 
+# ── User-Assigned Managed Identity ───────────────────────────────────────────
+resource "azurerm_user_assigned_identity" "app" {
+  name                = "id-nw-policy-hub-${local.suffix}"
+  resource_group_name = azurerm_resource_group.app.name
+  location            = var.location
+  tags                = local.common_tags
+}
+
+# ── Key Vault ─────────────────────────────────────────────────────────────────
+resource "azurerm_key_vault" "main" {
+  name                        = "kv-nwpolicyhub-${local.suffix}"
+  resource_group_name         = azurerm_resource_group.app.name
+  location                    = var.location
+  tenant_id                   = data.azurerm_client_config.current.tenant_id
+  sku_name                    = "standard"
+  soft_delete_retention_days  = 7
+  purge_protection_enabled    = false
+  tags                        = local.common_tags
+
+  # Terraform SP — needs to write secrets during apply
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = data.azurerm_client_config.current.object_id
+
+    secret_permissions = ["Get", "List", "Set", "Delete", "Purge", "Recover"]
+  }
+
+  # Managed Identity — App Service reads secrets at runtime
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = azurerm_user_assigned_identity.app.principal_id
+
+    secret_permissions = ["Get", "List"]
+  }
+}
+
+resource "azurerm_key_vault_secret" "mongodb_uri" {
+  name         = "mongodb-uri"
+  value        = var.mongodb_uri
+  key_vault_id = azurerm_key_vault.main.id
+}
+
+resource "azurerm_key_vault_secret" "jwt_secret" {
+  name         = "jwt-secret"
+  value        = var.jwt_secret
+  key_vault_id = azurerm_key_vault.main.id
+}
+
+resource "azurerm_key_vault_secret" "appinsights_conn" {
+  name         = "appinsights-connection-string"
+  value        = azurerm_application_insights.main.connection_string
+  key_vault_id = azurerm_key_vault.main.id
+}
+
 # ── App Service Plan (F1 Free Linux) ──────────────────────────────────────────
 resource "azurerm_service_plan" "plan" {
   name                = "asp-nw-policy-hub-${local.suffix}"
@@ -232,6 +286,11 @@ resource "azurerm_linux_web_app" "app" {
   https_only          = true
   tags                = local.common_tags
 
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.app.id]
+  }
+
   site_config {
     always_on = false
 
@@ -245,11 +304,14 @@ resource "azurerm_linux_web_app" "app" {
   app_settings = {
     NODE_ENV                                 = "production"
     PORT                                     = "8080"
-    MONGODB_URI                              = var.mongodb_uri
-    JWT_SECRET                               = var.jwt_secret
     JWT_EXPIRES_IN                           = "8h"
     WEBSITES_PORT                            = "8080"
     SCM_DO_BUILD_DURING_DEPLOYMENT           = "true"
-    APPLICATIONINSIGHTS_CONNECTION_STRING    = azurerm_application_insights.main.connection_string
+    # Key Vault references — resolved by App Service at runtime via Managed Identity
+    MONGODB_URI                              = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.mongodb_uri.versionless_id})"
+    JWT_SECRET                               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.jwt_secret.versionless_id})"
+    APPLICATIONINSIGHTS_CONNECTION_STRING    = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.appinsights_conn.versionless_id})"
+    # Tell App Service which identity to use for Key Vault resolution
+    AZURE_CLIENT_ID                          = azurerm_user_assigned_identity.app.client_id
   }
 }

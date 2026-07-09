@@ -48,3 +48,18 @@ output "workbook_id" {
   description = "Azure Monitor Workbook resource ID"
   value       = azurerm_application_insights_workbook.main.id
 }
+
+output "key_vault_name" {
+  description = "Key Vault name"
+  value       = azurerm_key_vault.main.name
+}
+
+output "key_vault_uri" {
+  description = "Key Vault URI"
+  value       = azurerm_key_vault.main.vault_uri
+}
+
+output "managed_identity_client_id" {
+  description = "Client ID of the User-Assigned Managed Identity"
+  value       = azurerm_user_assigned_identity.app.client_id
+}
