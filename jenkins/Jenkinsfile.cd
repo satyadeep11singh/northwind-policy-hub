@@ -18,12 +18,11 @@ pipeline {
   }
 
   environment {
-    ACR_LOGIN_SERVER      = credentials('acr-login-server')
-    AZURE_SP              = credentials('azure-sp')
-    AZURE_TENANT_ID       = credentials('azure-tenant-id')
-    AZURE_SUBSCRIPTION_ID = credentials('azure-subscription-id')
-    AZURE_RESOURCE_GROUP  = credentials('azure-resource-group')
-    WEBAPP_NAME           = credentials('webapp-name')
+    ACR_LOGIN_SERVER      = 'acrnwpolicyhub5f9671.azurecr.io'
+    AZURE_TENANT_ID       = '892a000d-d8af-4fd6-9936-7b358542b184'
+    AZURE_SUBSCRIPTION_ID = '032ac95b-b1bd-4707-816d-ca0fc91bbc8e'
+    AZURE_RESOURCE_GROUP  = 'rg-northwind-policy-hub-dev'
+    WEBAPP_NAME           = 'nw-policy-hub-5f9671'
     IMAGE_NAME            = 'northwind-policy-hub'
   }
 
@@ -31,13 +30,16 @@ pipeline {
 
     stage('Azure Login') {
       steps {
-        sh """
-          az login --service-principal \\
-            --username "${AZURE_SP_USR}" \\
-            --password "${AZURE_SP_PSW}" \\
-            --tenant   "${env.AZURE_TENANT_ID}"
-          az account set --subscription "${env.AZURE_SUBSCRIPTION_ID}"
-        """
+        withCredentials([usernamePassword(credentialsId: 'azure-sp',
+            usernameVariable: 'AZ_SP_ID', passwordVariable: 'AZ_SP_SECRET')]) {
+          sh """
+            az login --service-principal \\
+              --username "\$AZ_SP_ID" \\
+              --password "\$AZ_SP_SECRET" \\
+              --tenant   "${env.AZURE_TENANT_ID}"
+            az account set --subscription "${env.AZURE_SUBSCRIPTION_ID}"
+          """
+        }
       }
     }
 
