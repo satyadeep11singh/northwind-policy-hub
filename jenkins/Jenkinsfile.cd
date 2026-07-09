@@ -46,8 +46,6 @@ pipeline {
     stage('Deploy to App Service') {
       steps {
         sh """
-          sudo apt-get install -y zip
-
           # Create deploy zip from checked-out source
           # (node_modules excluded — App Service builds with SCM_DO_BUILD_DURING_DEPLOYMENT=true)
           zip -r deploy.zip server/ client/dist/ package.json package-lock.json \\
