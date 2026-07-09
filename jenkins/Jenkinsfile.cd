@@ -46,8 +46,7 @@ pipeline {
     stage('Deploy to App Service') {
       steps {
         sh """
-          # Pull the built image from ACR and extract the app files
-          az acr login --name \$(echo ${env.ACR_LOGIN_SERVER} | cut -d. -f1)
+          sudo apt-get install -y zip
 
           # Create deploy zip from checked-out source
           # (node_modules excluded — App Service builds with SCM_DO_BUILD_DURING_DEPLOYMENT=true)
