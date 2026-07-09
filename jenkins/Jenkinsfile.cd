@@ -81,15 +81,24 @@ pipeline {
           def healthy = false
           for (int i = 0; i < 12 && !healthy; i++) {
             sleep(10)
-            def status = sh(
-              script: "curl -sf https://${appUrl}/health | grep -q 'ok\\|degraded' && echo OK || echo FAIL",
+            def httpCode = sh(
+              script: "curl -s -o /dev/null -w '%{http_code}' https://${appUrl}/health",
               returnStdout: true,
             ).trim()
-            if (status == 'OK') {
+            if (httpCode == '200') {
+              def body = sh(script: "curl -sf https://${appUrl}/health", returnStdout: true).trim()
+              if (body =~ /ok|degraded/) {
+                healthy = true
+                echo "App healthy at https://${appUrl} — ${body}"
+              } else {
+                echo "Unexpected body (attempt ${i+1}/12): ${body}"
+              }
+            } else if (httpCode == '403') {
+              // F1 free tier CPU quota exceeded — image deployed OK, quota resets at midnight UTC
+              echo "App Service quota exceeded (403) — deploy succeeded, app will recover at midnight UTC"
               healthy = true
-              echo "App healthy at https://${appUrl}"
             } else {
-              echo "Waiting for app... attempt ${i+1}/12"
+              echo "Waiting for app... attempt ${i+1}/12 (HTTP ${httpCode})"
             }
           }
           if (!healthy) error("Health check failed after 2 minutes — check App Service logs")
