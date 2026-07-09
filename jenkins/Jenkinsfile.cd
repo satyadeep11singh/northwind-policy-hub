@@ -18,11 +18,11 @@ pipeline {
   }
 
   environment {
-    ACR_LOGIN_SERVER      = 'acrnwpolicyhub5f9671.azurecr.io'
+    ACR_LOGIN_SERVER      = 'acrnwpolicyhubf27896.azurecr.io'
     AZURE_TENANT_ID       = '892a000d-d8af-4fd6-9936-7b358542b184'
     AZURE_SUBSCRIPTION_ID = '032ac95b-b1bd-4707-816d-ca0fc91bbc8e'
     AZURE_RESOURCE_GROUP  = 'rg-northwind-policy-hub-dev'
-    WEBAPP_NAME           = 'nw-policy-hub-5f9671'
+    WEBAPP_NAME           = 'nw-policy-hub-f27896'
     IMAGE_NAME            = 'northwind-policy-hub'
   }
 

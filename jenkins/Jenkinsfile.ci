@@ -14,8 +14,8 @@ pipeline {
 
   environment {
     IMAGE_NAME       = 'northwind-policy-hub'
-    ACR_NAME         = 'acrnwpolicyhub5f9671'
-    ACR_LOGIN_SERVER = 'acrnwpolicyhub5f9671.azurecr.io'
+    ACR_NAME         = 'acrnwpolicyhubf27896'
+    ACR_LOGIN_SERVER = 'acrnwpolicyhubf27896.azurecr.io'
     AZURE_TENANT_ID  = '892a000d-d8af-4fd6-9936-7b358542b184'
   }
 
