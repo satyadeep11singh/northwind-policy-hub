@@ -1,5 +1,6 @@
 {
   "version": "Notebook/1.0",
+  "fallbackResourceIds": ["${app_insights_id}"],
   "items": [
 
     {

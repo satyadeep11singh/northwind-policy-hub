@@ -206,7 +206,9 @@ resource "azurerm_application_insights_workbook" "main" {
   resource_group_name = azurerm_resource_group.app.name
   location            = var.location
   display_name        = "NorthWind Policy Hub — Operations"
-  data_json           = templatefile("${path.module}/workbook.json", {})
+  data_json           = templatefile("${path.module}/workbook.json", {
+    app_insights_id = azurerm_application_insights.main.id
+  })
   tags                = local.common_tags
 }
 
