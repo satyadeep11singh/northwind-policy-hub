@@ -198,6 +198,18 @@ resource "azurerm_application_insights" "main" {
   tags                = local.common_tags
 }
 
+# ── Azure Monitor Workbook ────────────────────────────────────────────────────
+resource "random_uuid" "workbook" {}
+
+resource "azurerm_application_insights_workbook" "main" {
+  name                = random_uuid.workbook.result
+  resource_group_name = azurerm_resource_group.app.name
+  location            = var.location
+  display_name        = "NorthWind Policy Hub — Operations"
+  data_json           = templatefile("${path.module}/workbook.json", {})
+  tags                = local.common_tags
+}
+
 # ── App Service Plan (F1 Free Linux) ──────────────────────────────────────────
 resource "azurerm_service_plan" "plan" {
   name                = "asp-nw-policy-hub-${local.suffix}"

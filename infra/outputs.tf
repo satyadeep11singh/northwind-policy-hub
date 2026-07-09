@@ -43,3 +43,8 @@ output "app_insights_instrumentation_key" {
   value       = azurerm_application_insights.main.instrumentation_key
   sensitive   = true
 }
+
+output "workbook_id" {
+  description = "Azure Monitor Workbook resource ID"
+  value       = azurerm_application_insights_workbook.main.id
+}

@@ -1,0 +1,259 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+
+    {
+      "type": 1,
+      "content": {
+        "json": "# NorthWind Policy Hub — Operations Workbook\nCustomer activity, API health, and business events tracked via Application Insights."
+      },
+      "name": "title"
+    },
+
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "timeRange",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "value": { "durationMs": 86400000 },
+            "typeSettings": { "selectableValues": [
+              { "durationMs": 3600000,   "text": "Last 1 hour" },
+              { "durationMs": 14400000,  "text": "Last 4 hours" },
+              { "durationMs": 86400000,  "text": "Last 24 hours" },
+              { "durationMs": 604800000, "text": "Last 7 days" }
+            ]}
+          }
+        ]
+      },
+      "name": "parameters"
+    },
+
+    {
+      "type": 1,
+      "content": { "json": "## API Health" },
+      "name": "section-health"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "requests\n| where timestamp {TimeRange}\n| summarize\n    Total     = count(),\n    Success   = countif(success == true),\n    Failed    = countif(success == false),\n    AvgDurMs  = round(avg(duration), 1),\n    P95DurMs  = round(percentile(duration, 95), 1)\n| project Total, Success, Failed, AvgDurMs, P95DurMs",
+        "size": 4,
+        "title": "Request summary",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": { "columnMatch": "Total",    "formatter": 12 },
+          "leftContent":  { "columnMatch": "Total",    "formatter": 12 },
+          "showBorder": true
+        }
+      },
+      "name": "tile-requests"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "requests\n| where timestamp {TimeRange}\n| summarize Count = count() by resultCode\n| order by Count desc",
+        "size": 1,
+        "title": "HTTP status code breakdown",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "barchart"
+      },
+      "name": "chart-status-codes"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "requests\n| where timestamp {TimeRange}\n| summarize FailedCount = countif(success == false) by bin(timestamp, 15m)\n| render timechart",
+        "size": 0,
+        "title": "Failed requests over time (15 min bins)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "timechart"
+      },
+      "name": "chart-failures"
+    },
+
+    {
+      "type": 1,
+      "content": { "json": "## Customer Logins" },
+      "name": "section-logins"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where timestamp {TimeRange}\n| where name == 'customer.login'\n| summarize Logins = count() by bin(timestamp, 1h)\n| render timechart",
+        "size": 0,
+        "title": "Logins per hour",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "timechart"
+      },
+      "name": "chart-logins"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where timestamp {TimeRange}\n| where name == 'customer.login'\n| extend email = tostring(customDimensions.email)\n| summarize LoginCount = count() by email\n| order by LoginCount desc\n| take 10",
+        "size": 1,
+        "title": "Top 10 most active customers",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "table"
+      },
+      "name": "table-top-customers"
+    },
+
+    {
+      "type": 1,
+      "content": { "json": "## Policy Views" },
+      "name": "section-policies"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where timestamp {TimeRange}\n| where name == 'policy.viewed'\n| extend policyType = tostring(customDimensions.type)\n| summarize Views = count() by policyType\n| render piechart",
+        "size": 3,
+        "title": "Policy views by type (auto vs home)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "piechart"
+      },
+      "name": "chart-policy-types"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where timestamp {TimeRange}\n| where name == 'policy.viewed'\n| summarize Views = count() by bin(timestamp, 1h)\n| render timechart",
+        "size": 0,
+        "title": "Policy views over time",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "timechart"
+      },
+      "name": "chart-policy-views"
+    },
+
+    {
+      "type": 1,
+      "content": { "json": "## Coverage Changes" },
+      "name": "section-coverage"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where timestamp {TimeRange}\n| where name == 'coverage.changed'\n| extend\n    policyType  = tostring(customDimensions.policyType),\n    oldPremium  = todouble(customDimensions.oldPremium),\n    newPremium  = todouble(customDimensions.newPremium),\n    changedKeys = tostring(customDimensions.changedKeys)\n| project timestamp, policyType, changedKeys, oldPremium, newPremium,\n    delta = round(newPremium - oldPremium, 2)\n| order by timestamp desc",
+        "size": 1,
+        "title": "Recent coverage changes",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "delta", "formatter": 8,
+              "formatOptions": { "palette": "redGreen", "customColumnWidthSetting": "80px" } }
+          ]
+        }
+      },
+      "name": "table-coverage-changes"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where timestamp {TimeRange}\n| where name == 'coverage.changed'\n| extend changedKeys = tostring(customDimensions.changedKeys)\n| mv-expand key = split(changedKeys, ',')\n| summarize Changes = count() by tostring(key)\n| order by Changes desc",
+        "size": 1,
+        "title": "Most frequently changed coverage options",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "barchart"
+      },
+      "name": "chart-coverage-keys"
+    },
+
+    {
+      "type": 1,
+      "content": { "json": "## Claims" },
+      "name": "section-claims"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where timestamp {TimeRange}\n| where name == 'claim.opened'\n| extend\n    policyType   = tostring(customDimensions.policyType),\n    incidentType = tostring(customDimensions.incidentType),\n    claimNumber  = tostring(customDimensions.claimNumber)\n| project timestamp, claimNumber, policyType, incidentType\n| order by timestamp desc",
+        "size": 1,
+        "title": "Claims opened",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "table"
+      },
+      "name": "table-claims"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where timestamp {TimeRange}\n| where name == 'claim.opened'\n| extend incidentType = tostring(customDimensions.incidentType)\n| summarize Claims = count() by incidentType\n| order by Claims desc",
+        "size": 1,
+        "title": "Claims by incident type",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "barchart"
+      },
+      "name": "chart-claims-by-type"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where timestamp {TimeRange}\n| where name in ('customer.login', 'policy.viewed', 'coverage.changed', 'claim.opened')\n| summarize Count = count() by name, bin(timestamp, 1h)\n| render timechart",
+        "size": 0,
+        "title": "All business events over time",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "timechart"
+      },
+      "name": "chart-all-events"
+    }
+
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}
