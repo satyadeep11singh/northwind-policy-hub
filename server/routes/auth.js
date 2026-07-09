@@ -12,6 +12,8 @@ const loginLimiter = rateLimit({
   message: { error: 'Too many login attempts, please try again later' },
   standardHeaders: true,
   legacyHeaders: false,
+  // App Service proxy passes IP:port — strip port so rate-limit key is valid
+  keyGenerator: (req) => req.ip.replace(/:\d+$/, ''),
 });
 
 // POST /api/auth/login
