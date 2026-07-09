@@ -10,6 +10,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
   }
 
   backend "azurerm" {
@@ -172,6 +176,20 @@ resource "azurerm_linux_virtual_machine" "jenkins" {
   custom_data = base64encode(file("${path.module}/../jenkins/cloud-init.yml"))
 }
 
+# ── Set keyVaultReferenceIdentity = SystemAssigned on the web app ─────────────
+# azurerm provider does not expose this property; set it via az CLI after apply.
+resource "null_resource" "kv_ref_identity" {
+  triggers = {
+    app_id = azurerm_linux_web_app.app.id
+  }
+
+  provisioner "local-exec" {
+    command = "az webapp update --resource-group ${azurerm_resource_group.app.name} --name ${azurerm_linux_web_app.app.name} --set keyVaultReferenceIdentity=SystemAssigned"
+  }
+
+  depends_on = [azurerm_linux_web_app.app]
+}
+
 # ── Service Principal → ACR push permission (for Jenkins) ─────────────────────
 resource "azurerm_role_assignment" "jenkins_acr_push" {
   scope                = azurerm_container_registry.acr.id
@@ -240,14 +258,23 @@ resource "azurerm_key_vault" "main" {
     secret_permissions = ["Get", "List", "Set", "Delete", "Purge", "Recover"]
   }
 
-  # Managed Identity — App Service reads secrets at runtime
+  # User-Assigned Managed Identity — fallback/explicit access
   access_policy {
     tenant_id = data.azurerm_client_config.current.tenant_id
     object_id = azurerm_user_assigned_identity.app.principal_id
 
     secret_permissions = ["Get", "List"]
   }
+
+  # System-Assigned Managed Identity — used by App Service KV reference resolver
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = var.app_system_identity_principal_id
+
+    secret_permissions = ["Get", "List"]
+  }
 }
+
 
 resource "azurerm_key_vault_secret" "mongodb_uri" {
   name         = "mongodb-uri"
@@ -287,7 +314,7 @@ resource "azurerm_linux_web_app" "app" {
   tags                = local.common_tags
 
   identity {
-    type         = "UserAssigned"
+    type         = "SystemAssigned, UserAssigned"
     identity_ids = [azurerm_user_assigned_identity.app.id]
   }
 
@@ -307,11 +334,9 @@ resource "azurerm_linux_web_app" "app" {
     JWT_EXPIRES_IN                           = "8h"
     WEBSITES_PORT                            = "8080"
     SCM_DO_BUILD_DURING_DEPLOYMENT           = "true"
-    # Key Vault references — resolved by App Service at runtime via Managed Identity
+    # Key Vault references — resolved by App Service system-assigned identity at runtime
     MONGODB_URI                              = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.mongodb_uri.versionless_id})"
     JWT_SECRET                               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.jwt_secret.versionless_id})"
     APPLICATIONINSIGHTS_CONNECTION_STRING    = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.appinsights_conn.versionless_id})"
-    # Tell App Service which identity to use for Key Vault resolution
-    AZURE_CLIENT_ID                          = azurerm_user_assigned_identity.app.client_id
   }
 }

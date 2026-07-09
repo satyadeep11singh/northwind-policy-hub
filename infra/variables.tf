@@ -36,3 +36,9 @@ variable "jenkins_sp_object_id" {
   description = "Object ID of the Service Principal used by Jenkins (for AcrPush role assignment)"
   type        = string
 }
+
+variable "app_system_identity_principal_id" {
+  description = "Principal ID of the App Service system-assigned managed identity (for Key Vault access)"
+  type        = string
+  default     = ""
+}
