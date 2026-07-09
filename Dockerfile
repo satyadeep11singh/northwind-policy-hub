@@ -17,6 +17,9 @@ RUN npm ci --omit=dev --prefer-offline
 # ── Stage 3: Final runtime image ──────────────────────────────────────────────
 FROM node:20-alpine AS runtime
 
+# Patch Alpine OS packages to fix any OS-level CVEs (e.g. libcrypto3/libssl3)
+RUN apk upgrade --no-cache
+
 # Non-root user for container security
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 

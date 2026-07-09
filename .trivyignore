@@ -5,3 +5,32 @@
 #   2. The vulnerability is not exploitable in this app's context
 #
 # Each entry must include a comment explaining why it is suppressed.
+
+# ── npm-internal bundled dependencies ────────────────────────────────────────
+# These CVEs are in /usr/local/lib/node_modules/npm/ — npm's own bundled
+# packages that ship with node:20-alpine. They are NOT in our application's
+# dependencies. npm is a build/install tool and is not used at runtime, so
+# these vulnerabilities are not exploitable in production. The fix requires a
+# newer Node.js LTS release that bundles an updated npm version.
+
+# cross-spawn 7.0.3 (npm bundled dep) — ReDoS
+CVE-2024-21538
+
+# glob 10.4.2 (npm bundled dep)
+CVE-2025-64756
+
+# minimatch (npm bundled dep) — ReDoS variants
+CVE-2026-26996
+CVE-2026-27903
+CVE-2026-27904
+
+# sigstore 2.3.1 (npm bundled dep)
+CVE-2026-48815
+
+# tar 6.2.1 (npm bundled dep) — path traversal / symlink variants
+CVE-2026-23745
+CVE-2026-23950
+CVE-2026-24842
+CVE-2026-26960
+CVE-2026-29786
+CVE-2026-31802
