@@ -1,4 +1,5 @@
 module.exports = {
+  ignorePatterns: ['**/*.test.js', '**/*.spec.js'],
   env: {
     node: true,
     es2021: true,
