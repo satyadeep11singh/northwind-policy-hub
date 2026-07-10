@@ -87,6 +87,8 @@ Demo accounts (password `Demo@1234`):
                                        └──────────────────────┘
 ```
 
+![NorthWind Policy Hub — full architecture diagram](docs/project5-ad.jpg)
+
 ---
 
 ## Screenshots
