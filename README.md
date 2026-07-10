@@ -1,19 +1,26 @@
 # NorthWind Insurance — Policy Hub
 
-A production-grade customer self-service portal for Ontario auto and home insurance policies. Built as a showcase of Azure cloud engineering skills: Terraform IaC, Jenkins CI/CD on Azure VM, Docker + ACR, App Service deployment slots, Key Vault, and Application Insights.
+A production-grade customer self-service portal for Ontario auto and home insurance policies.
+Built as a portfolio showcase of Azure cloud engineering: Terraform IaC, Jenkins CI/CD on an
+Azure VM, Docker + ACR, App Service (container mode), Key Vault with Managed Identity, and
+Application Insights with a custom Monitor Workbook.
+
+> **Disclaimer:** "NorthWind Insurance" is a fictional company. All code, infrastructure,
+> and data are for personal learning purposes only and do not represent any real systems,
+> data, or processes from any actual employer or insurance company.
 
 ---
 
-## What It Does
+## What it does
 
-Existing NorthWind customers log in to:
+Existing NorthWind customers log in to manage their policies without calling an agent:
 
 | Feature | Detail |
 |---|---|
-| **Policy Dashboard** | View all active auto and home policies in one place |
+| **Policy Dashboard** | All active auto and home policies in one place |
 | **Coverage Management** | Toggle optional coverages on/off; adjust collision and comprehensive deductibles |
 | **Claims** | View claim history with adjuster notes and status tracker; open new claims |
-| **Billing** | See next payment date/amount, payment frequency, and full payment history per policy |
+| **Billing** | Next payment date/amount, payment frequency, and full payment history per policy |
 
 Demo accounts (password `Demo@1234`):
 
@@ -28,222 +35,369 @@ Demo accounts (password `Demo@1234`):
 ## Architecture
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                       GitHub Repository                         │
-│                  (source of truth, webhooks)                    │
-└────────────────────────────┬───────────────────────────────────┘
-                             │ webhook on push to main
-                             ▼
-┌────────────────────────────────────────────────────────────────┐
-│          Jenkins VM  (Standard_B2s · Azure VM)                  │
-│          Terraform-provisioned · Ubuntu 22.04 · cloud-init      │
-│                                                                  │
-│  CI Pipeline (Jenkinsfile.ci)                                   │
-│    checkout → npm install (parallel) → lint → test →            │
-│    npm run build (React/Vite) → docker build → push ACR         │
-│                                                                  │
-│  CD Pipeline (Jenkinsfile.cd) — triggered by CI                 │
-│    az login (SP) → deploy dev slot → smoke test →              │
-│    swap dev→staging → smoke test →                              │
-│    swap staging→production → health check → rollback if fail    │
-└──────────┬─────────────────┬──────────────────────────────────┘
-           │                 │
-           ▼                 ▼
-    ┌────────────┐   ┌───────────────────────────────────────┐
-    │    ACR     │   │    Azure App Service  (Standard S1)    │
-    │  (Basic)   │   │                                        │
-    │ Docker img │   │  production slot  → nw-policy-hub.    │
-    │ tagged by  │   │                     azurewebsites.net │
-    │ build#-SHA │   │  staging slot     → nw-policy-hub-    │
-    └────────────┘   │                     staging.azurewebsites.net │
-                     │  dev slot         → nw-policy-hub-    │
-                     │                     dev.azurewebsites.net     │
-                     │                                        │
-                     │  System-assigned Managed Identity      │
-                     └──────────┬────────────────────────────┘
-                                │ MI reads secrets at startup
-                                ▼
-                     ┌────────────────────┐
-                     │    Key Vault       │
-                     │  mongodb-uri       │
-                     │  jwt-secret        │
-                     │  appinsights-conn  │
-                     └────────────────────┘
-                                │
-                     ┌──────────┴──────────┐
-                     ▼                     ▼
-            ┌──────────────┐    ┌──────────────────────┐
-            │ MongoDB Atlas│    │  Application Insights │
-            │  (free M0)  │    │  + Log Analytics WS   │
-            │ switchable  │    │  custom events:       │
-            │ to Cosmos DB│    │  customer.login       │
-            └─────────────┘    │  claim.opened         │
-                               │  coverage.changed     │
-                               │  policy.viewed        │
-                               └──────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                      GitHub Repository                        │
+│                   (source of truth, main branch)              │
+└──────────────────────────┬───────────────────────────────────┘
+                           │ manual trigger (webhook: future)
+                           ▼
+┌──────────────────────────────────────────────────────────────┐
+│         Jenkins VM  (Standard_B2s_v2 · Azure VM)              │
+│         Terraform-provisioned · Ubuntu 22.04 · cloud-init     │
+│                                                               │
+│  CI Pipeline  (Jenkinsfile.ci)                                │
+│    checkout → npm ci → lint → test → npm run build →          │
+│    docker build → Trivy scan → push to ACR → trigger CD       │
+│                                                               │
+│  CD Pipeline  (Jenkinsfile.cd)                                │
+│    az login (SP) → az webapp config container set →           │
+│    az webapp restart → health check curl /health              │
+└──────────┬────────────────────┬──────────────────────────────┘
+           │                    │
+           ▼                    ▼
+    ┌────────────┐    ┌─────────────────────────────────────┐
+    │    ACR     │    │   Azure App Service  (Linux, F1)     │
+    │  (Basic)   │    │   Container mode — image from ACR    │
+    │ tagged by  │    │                                      │
+    │ build#-SHA │    │   SystemAssigned + UserAssigned      │
+    └────────────┘    │   Managed Identity                   │
+                      └──────────────┬──────────────────────┘
+                                     │ keyVaultReferenceIdentity
+                                     │ = SystemAssigned
+                                     ▼
+                      ┌─────────────────────────────────────┐
+                      │           Key Vault                  │
+                      │   mongodb-uri                        │
+                      │   jwt-secret                         │
+                      │   appinsights-connection-string      │
+                      └──────────────┬──────────────────────┘
+                                     │
+                      ┌──────────────┴──────────────┐
+                      ▼                             ▼
+             ┌──────────────┐          ┌──────────────────────┐
+             │ MongoDB Atlas│          │  Application Insights │
+             │  (free M0)   │          │  + Log Analytics WS   │
+             │  0.0.0.0/0   │          │  + Monitor Workbook   │
+             │  (dev only)  │          │                       │
+             └──────────────┘          │  custom events:       │
+                                       │  customer.login       │
+                                       │  policy.viewed        │
+                                       │  coverage.changed     │
+                                       │  claim.opened         │
+                                       └──────────────────────┘
 ```
 
 ---
 
-## Azure Services Used
+## Azure services used
 
-| Service | Role | Enterprise Pattern |
+| Service | Role | Pattern |
 |---|---|---|
-| **Azure App Service** (Linux, S1) | Runtime for Node.js + React app | Deployment slots for zero-downtime promotion |
-| **App Service Deployment Slots** | dev / staging / production | Zero-downtime swap; instant rollback |
-| **Azure Container Registry** (Basic) | Docker image store | SP-based push from Jenkins; MI-based pull by App Service |
-| **Azure Key Vault** | Secret store | Managed Identity access — no passwords in code or env vars |
-| **Managed Identity** | App Service identity | AcrPull + Key Vault Get/List — zero credential rotation |
-| **Application Insights** | APM + custom telemetry | Node.js SDK auto-instruments HTTP, MongoDB, and custom events |
-| **Log Analytics Workspace** | Backing store for App Insights | Workspace-based AI (not classic) |
-| **Azure VM** (Standard_B2s) | Self-hosted Jenkins | Terraform + cloud-init provisioned; NSG-restricted |
-| **Terraform remote state** | State backend | Azure Blob Storage shared with NorthWind project suite |
+| **Azure App Service** (Linux, F1) | Runtime for Node.js + React container | Container mode — image pulled from ACR at deploy |
+| **Azure Container Registry** (Basic) | Docker image store | SP-based push from Jenkins; SP-based pull in CD |
+| **Azure Key Vault** (Standard) | Secret store | App Service Key Vault references resolved at runtime via Managed Identity |
+| **Managed Identity** (System + User Assigned) | App Service identity | `keyVaultReferenceIdentity = SystemAssigned` — zero credentials in app settings |
+| **Application Insights** | APM + custom telemetry | Node.js SDK auto-instruments HTTP and MongoDB; 4 custom business events |
+| **Log Analytics Workspace** | Backing store for App Insights | Workspace-based (not classic) |
+| **Azure Monitor Workbook** | Operations dashboard | 8 panels — API health, logins, policy views, coverage changes, claims |
+| **Azure VM** (Standard_B2s_v2) | Self-hosted Jenkins | Terraform + cloud-init provisioned; cloud-init restarts Jenkins after Docker group assignment |
+| **Terraform remote state** | State backend | Azure Blob Storage shared with NorthWind project suite (`rg-northwind-tfstate`) |
 
 ---
 
-## Repository Structure
+## Repository structure
 
 ```
 northwind-policy-hub/
-├── server/                    # Express API
-│   ├── index.js               # Boot sequence (Key Vault → DB → listen)
-│   ├── models/                # Mongoose schemas
+├── server/                        # Express API
+│   ├── index.js                   # Boot: App Insights init → loadSecrets → connect DB → listen
+│   ├── models/                    # Mongoose schemas
 │   │   ├── Customer.js
-│   │   ├── Policy.js          # Auto + home coverage sub-schemas
+│   │   ├── Policy.js              # Auto + home coverage sub-schemas
 │   │   ├── Billing.js
 │   │   └── Claim.js
-│   ├── routes/                # REST endpoints
-│   │   ├── auth.js            # POST /api/auth/login|logout
-│   │   ├── policies.js        # GET/PATCH /api/policies
-│   │   ├── billing.js         # GET /api/billing
-│   │   ├── claims.js          # GET/POST /api/claims
-│   │   └── health.js          # GET /health (Jenkins CD pings this)
+│   ├── routes/                    # REST endpoints
+│   │   ├── auth.js                # POST /api/auth/login|logout  (rate-limited)
+│   │   ├── policies.js            # GET/PATCH /api/policies
+│   │   ├── billing.js             # GET /api/billing
+│   │   ├── claims.js              # GET/POST /api/claims
+│   │   └── health.js              # GET /health  (CD pipeline pings this)
 │   ├── middleware/
-│   │   ├── auth.js            # JWT Bearer verification
+│   │   ├── auth.js                # JWT Bearer verification
 │   │   └── errorHandler.js
-│   ├── services/
-│   │   ├── appInsights.js     # Application Insights init + trackEvent
-│   │   ├── keyVault.js        # Managed Identity secret loader
-│   │   ├── db.js              # Mongoose connect (Atlas or Cosmos DB)
-│   │   └── logger.js          # Winston (JSON in prod, pretty in dev)
-│   └── seed/index.js          # Seed 3 customers, 6 policies, billing, claims
-├── client/                    # React + Vite frontend
-│   ├── src/
-│   │   ├── App.jsx            # Router + protected routes
-│   │   ├── context/AuthContext.jsx
-│   │   ├── services/api.js    # Axios instance + auth interceptor
-│   │   ├── components/AppShell.jsx  # Sidebar + topbar layout
-│   │   └── pages/
-│   │       ├── LoginPage.jsx
-│   │       ├── DashboardPage.jsx
-│   │       ├── PoliciesPage.jsx
-│   │       ├── PolicyDetailPage.jsx  # Coverage toggles + deductible selector
-│   │       ├── ClaimsPage.jsx        # List + new claim form
-│   │       ├── ClaimDetailPage.jsx   # Progress tracker + adjuster notes
-│   │       └── BillingPage.jsx
-│   └── vite.config.js
-├── infra/                     # Terraform
-│   ├── main.tf                # Root: RGs, module calls, KV secrets, MI access policy
+│   └── services/
+│       ├── appInsights.js         # App Insights init + trackEvent wrapper
+│       ├── keyVault.js            # Managed Identity secret loader (local dev fallback to .env)
+│       ├── db.js                  # Mongoose connect with graceful degraded-mode fallback
+│       └── logger.js              # Winston (JSON in prod, pretty in dev)
+├── client/                        # React + Vite frontend
+│   └── src/
+│       ├── App.jsx                # Router + protected routes
+│       ├── context/AuthContext.jsx
+│       ├── services/api.js        # Axios instance + auth interceptor
+│       ├── components/AppShell.jsx
+│       └── pages/
+│           ├── LoginPage.jsx
+│           ├── DashboardPage.jsx
+│           ├── PoliciesPage.jsx
+│           ├── PolicyDetailPage.jsx   # Coverage toggles + deductible selector
+│           ├── ClaimsPage.jsx         # List + new claim form
+│           ├── ClaimDetailPage.jsx    # Progress tracker + adjuster notes
+│           └── BillingPage.jsx
+├── infra/                         # Terraform (flat, no modules)
+│   ├── main.tf                    # All resources: RG, ACR, VNet, VM, KV, App Service, AI, Workbook
 │   ├── variables.tf
 │   ├── outputs.tf
-│   └── modules/
-│       ├── acr/               # Azure Container Registry
-│       ├── app_service/       # App Service Plan + Web App + 2 slots
-│       ├── app_insights/      # Application Insights + Log Analytics Workspace
-│       ├── key_vault/         # Key Vault + deployer access policy
-│       └── jenkins_vm/        # VM + VNet + subnet + NSG + public IP
+│   ├── terraform.tfvars.example
+│   └── workbook.json              # Azure Monitor Workbook definition (8 panels)
 ├── jenkins/
-│   ├── Jenkinsfile.ci         # CI: install → lint → test → build → push ACR
-│   ├── Jenkinsfile.cd         # CD: az login → deploy dev → swap → prod health check
-│   ├── cloud-init.yml         # Jenkins VM first-boot provisioning
+│   ├── Jenkinsfile.ci             # CI: install → lint → test → build → docker → trivy → push ACR
+│   ├── Jenkinsfile.cd             # CD: az login → container set → restart → health check
+│   ├── cloud-init.yml             # Jenkins VM first-boot: Docker CE, Jenkins LTS, Node 20, az CLI, Trivy
 │   └── jenkins-credentials-setup.md
-├── Dockerfile                 # Multi-stage: React build + Node server
+├── Dockerfile                     # Multi-stage: React Vite build + Node server
+├── .trivyignore                   # Suppressed npm CVEs that have no upstream fix
 ├── .env.example
-└── package.json
+└── package.json                   # lint, test:ci, build scripts
 ```
 
 ---
 
-## Local Development Setup
+## The build, step by step
+
+### Step 1 — The app
+
+The application is a React + Vite frontend backed by an Express API and MongoDB Atlas.
+A single `Dockerfile` does a multi-stage build: the React app is compiled with Vite in
+the first stage, then copied into the Node.js runtime stage alongside the Express server.
+In production the Express server serves the React `dist/` as static files, so there is only
+one process and one port (8080) to manage.
+
+The boot sequence in `server/index.js` is ordered deliberately:
+
+```
+App Insights init → loadSecrets (Key Vault) → connect (MongoDB) → listen
+```
+
+App Insights must be initialized first so it can auto-instrument all subsequent HTTP and
+MongoDB calls. If Key Vault or MongoDB fail, the server still starts — `/health` returns
+`degraded` instead of `ok`, and the CD health check accepts both as passing.
+
+### Step 2 — Tests and lint
+
+Jest tests cover the API routes via `supertest`. ESLint gates code quality with
+`--max-warnings=0`. Both run in CI before any Docker image is built. The test command
+(`npm run test:ci`) produces a `junit.xml` report that Jenkins publishes after every run.
+
+### Step 3 — Terraform provisions everything
+
+A single flat `main.tf` provisions the full stack:
+
+- Resource group (`rg-northwind-policy-hub-dev`)
+- VNet + subnet + NSG for the Jenkins VM (ports 22 and 8080)
+- Jenkins VM (`Standard_B2s_v2`, Ubuntu 22.04, cloud-init)
+- Azure Container Registry (`acrnwpolicyhub{suffix}`)
+- App Service Plan (F1 Free, Linux) + Linux Web App
+- User-Assigned Managed Identity
+- Key Vault with three secrets and access policies for both the Terraform SP and the identity
+- `null_resource` provisioner that sets `keyVaultReferenceIdentity=SystemAssigned` via az CLI
+- Log Analytics Workspace + Application Insights
+- Azure Monitor Workbook (8 panels, bound to App Insights via `source_id`)
+
+A `random_id` suffix is generated on first apply — all resource names include it, so
+destroy/apply cycles never produce name conflicts.
+
+Terraform remote state is stored in `rg-northwind-tfstate / stnorthwindtf676746`, shared
+with the rest of the NorthWind project suite and untouched by `terraform destroy`.
+
+### Step 4 — Jenkins VM via cloud-init
+
+The VM's `custom_data` is the `jenkins/cloud-init.yml` file, base64-encoded by Terraform.
+On first boot it installs Docker CE, Jenkins LTS, Node.js 20, Azure CLI, and Trivy — then
+adds the `jenkins` user to the `docker` group and **restarts Jenkins** so the group
+membership takes effect without an SSH session. The initial admin password is written to
+`/var/log/cloud-init-jenkins.log`.
+
+### Step 5 — CI pipeline
+
+The CI pipeline (`Jenkinsfile.ci`) runs five quality gates before touching Docker:
+
+```
+Checkout → Install (npm ci) → Lint (eslint) → Test (jest) → Build (vite)
+         → Docker Build → Trivy Scan → Push to ACR → Trigger CD
+```
+
+Images are tagged `{BUILD_NUMBER}-{short_SHA}` (e.g. `3-033042d`). Both the versioned
+tag and `latest` are pushed. Trivy runs with `--exit-code 1` on CRITICAL and HIGH — the
+build fails if any unaddressed finding exists. After push, the CI pipeline triggers the
+CD pipeline and passes the build tag as a parameter.
+
+### Step 6 — CD pipeline
+
+The CD pipeline (`Jenkinsfile.cd`) deploys by updating the App Service container image:
 
 ```bash
-# 1. Clone
-git clone https://github.com/satyadeep11singh/northwind-policy-hub.git
-cd northwind-policy-hub
+az webapp config container set \
+  --docker-custom-image-name acrnwpolicyhub{suffix}.azurecr.io/northwind-policy-hub:{tag} \
+  --container-registry-user   {SP_CLIENT_ID} \
+  --container-registry-password {SP_SECRET}
 
-# 2. Install dependencies
-npm install
-npm install --prefix client
-
-# 3. Configure environment
-cp .env.example .env
-# Fill in: MONGODB_URI, JWT_SECRET (leave KEY_VAULT_URI blank for local)
-
-# 4. Seed the database
-npm run seed
-
-# 5. Start dev server (Express API + Vite HMR concurrently)
-npm run dev
-# App: http://localhost:5173   API: http://localhost:3001
+az webapp restart ...
 ```
+
+App Service is in **container mode** after the first CD run. Zip deploy does not work in
+container mode — it triggers an Oryx build that fails because there is no `package.json`
+at the expected path after the container image is set.
+
+The health check polls `/health` for up to 2 minutes. It accepts `ok` or `degraded` as
+healthy. A 403 response (F1 free tier CPU quota exceeded) is also treated as a passing
+check — the image is deployed correctly, and the app recovers automatically at midnight UTC
+when the quota resets.
+
+### Step 7 — Key Vault + Managed Identity
+
+Secrets (`MONGODB_URI`, `JWT_SECRET`, `APPLICATIONINSIGHTS_CONNECTION_STRING`) are stored
+in Key Vault and referenced in App Service app settings using the
+`@Microsoft.KeyVault(SecretUri=...)` syntax. App Service resolves these at startup using the
+system-assigned managed identity.
+
+The critical configuration that is not exposed by the Terraform azurerm provider is
+`keyVaultReferenceIdentity`. Without it set to `SystemAssigned`, the resolver reports
+`MSINotEnabled` even when an identity is assigned. A `null_resource` provisioner runs
+`az webapp update --set keyVaultReferenceIdentity=SystemAssigned` after every apply.
+
+### Step 8 — Application Insights + Monitor Workbook
+
+The Node.js App Insights SDK is initialized before any other `require` so it can
+auto-instrument HTTP requests and MongoDB queries. Four custom business events are tracked:
+
+| Event | Triggered by |
+|---|---|
+| `customer.login` | Successful authentication |
+| `policy.viewed` | GET /api/policies/:id |
+| `coverage.changed` | PATCH /api/policies/:id/coverage |
+| `claim.opened` | POST /api/claims |
+
+An Azure Monitor Workbook with 8 panels is provisioned by Terraform. It is bound to the
+App Insights instance via `source_id = lower(azurerm_application_insights.main.id)` — the
+`lower()` is required because the Azure Portal rejects mixed-case resource IDs in the
+`source_id` field.
 
 ---
 
-## Deployment Runbook
+## Problems found and fixed
 
-### Step 1 — Provision infrastructure
+Every item below is a genuine bug hit during this project — included because the diagnosis
+matters as much as the fix.
 
-```bash
-cd infra
-cp terraform.tfvars.example terraform.tfvars
-# Fill in: mongodb_uri, jwt_secret, jenkins_admin_password
+### 1. Zip deploy fails on a container-mode App Service
 
-terraform init
-terraform plan -out=tfplan
-terraform apply tfplan
+After Terraform provisions the App Service in container mode (`docker_image_name` set),
+running `az webapp deploy` (zip deploy) causes Oryx to attempt a source code build inside
+the container. It fails because the expected `package.json` structure doesn't match what
+Oryx expects. Fix: deploy by updating the container image tag with
+`az webapp config container set` + `az webapp restart`. Never use zip deploy once the App
+Service is in container mode.
 
-# Capture outputs
-terraform output -json > ../docs/tf-outputs.json
-```
+### 2. `--acr-use-identity` not recognized on az CLI 2.88
 
-### Step 2 — Set up Jenkins VM
+The Jenkins VM's Azure CLI version (2.88.0) does not support the `--acr-use-identity` flag
+for `az webapp config container set`. Fix: use `--container-registry-user` and
+`--container-registry-password` with the SP credentials instead.
 
-```bash
-# SSH into the Jenkins VM
-ssh azureuser@$(terraform output -raw jenkins_public_ip)
+### 3. Jenkins docker permission denied after first boot
 
-# Initial admin password
-cat /var/log/cloud-init-jenkins.log
+`cloud-init` adds the `jenkins` user to the `docker` group during provisioning, but Jenkins
+starts before the group membership takes effect in the process's credentials. Every pipeline
+run fails with `permission denied on /var/run/docker.sock`. Fix: add
+`systemctl restart jenkins` to `cloud-init.yml` after the Docker CE install and group
+assignment steps.
 
-# Open http://<public-ip>:8080 and complete setup wizard
-# Install plugins: Pipeline, Git, Docker Pipeline, Credentials Binding, JUnit, HTML Publisher
-```
+### 4. express-rate-limit `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`
 
-Configure credentials per [jenkins/jenkins-credentials-setup.md](jenkins/jenkins-credentials-setup.md).
+App Service sits behind a reverse proxy that injects `X-Forwarded-For`. With Express's
+`trust proxy` unset (default false), `express-rate-limit` sees this header but doesn't
+trust it, and throws. Fix: `app.set('trust proxy', 1)` in `server/index.js`.
 
-### Step 3 — Create Jenkins jobs
+### 5. express-rate-limit `ERR_ERL_INVALID_IP_ADDRESS`
 
-In Jenkins UI:
-1. **New Item** → `northwind-policy-hub-ci` → Pipeline → SCM: this repo → Script Path: `jenkins/Jenkinsfile.ci`
-2. **New Item** → `northwind-policy-hub-cd` → Pipeline → Script Path: `jenkins/Jenkinsfile.cd`
-3. Configure GitHub webhook: `http://<jenkins-ip>:8080/github-webhook/`
+After fixing problem 4, App Service's proxy started passing `request.ip` as `IP:port`
+(e.g. `70.50.59.24:52895`). `express-rate-limit` validates the key as an IP address and
+rejects the `IP:port` format, throwing before the login handler runs — meaning
+`trackEvent('customer.login')` never fires. Fix: add a `keyGenerator` to the rate limiter
+that strips the port: `(req) => req.ip.replace(/:\d+$/, '')`.
 
-### Step 4 — First pipeline run
+### 6. Workbook shows "No Application Insights resources selected"
 
-Push to `main` or trigger the CI job manually. The CD pipeline is triggered automatically on success.
+The `fallbackResourceIds` field in the workbook JSON was present but the workbook
+`source_id` in Terraform was pointing to `"azure monitor"` (the default). The portal opens
+the workbook in a context where no App Insights resource is selected, so all queries fail.
+Fix: set `source_id = lower(azurerm_application_insights.main.id)` on the
+`azurerm_application_insights_workbook` resource. The `lower()` is required — the portal
+rejects mixed-case resource IDs.
 
-**Expected flow:**
-```
-CI:  checkout → install → lint → test → build → docker build → push ACR → trigger CD
-CD:  az login → deploy dev slot → health check → swap dev→staging → swap staging→prod → health check
-```
+### 7. Workbook `name` must be a UUID
 
-### Step 5 — Verify
+`terraform apply` failed with "expected name to be a valid UUID" on the workbook resource.
+Fix: add `resource "random_uuid" "workbook" {}` and use `random_uuid.workbook.result` as
+the workbook name.
 
-```bash
-curl https://$(terraform output -raw app_service_url)/health
-# Expected: {"status":"ok","version":"1.0.0","buildId":"<build-tag>","db":"connected"}
-```
+### 8. Key Vault references show `MSINotEnabled`
+
+After adding a User-Assigned Managed Identity to the App Service, all three Key Vault
+references showed status `MSINotEnabled`. The reference resolver defaults to the
+System-Assigned identity, ignoring User-Assigned identities unless explicitly told otherwise.
+Fix: add `type = "SystemAssigned, UserAssigned"` to the identity block, add a Key Vault
+access policy for the system-assigned principal ID, and set
+`keyVaultReferenceIdentity=SystemAssigned` via `az webapp update`. The azurerm Terraform
+provider does not expose `keyVaultReferenceIdentity` — a `null_resource` provisioner handles
+it on every apply.
+
+### 9. System-assigned identity principal_id unknown at plan time
+
+After switching to `SystemAssigned, UserAssigned` identity, the Key Vault access policy
+for the system identity couldn't reference `azurerm_linux_web_app.app.identity[0].principal_id`
+because it was an empty string before the web app existed. This caused Terraform to fail
+with "expected object_id to be a valid UUID". Fix: two-step apply — first apply creates
+the identity, then the principal_id is captured (`az webapp identity show --query principalId`)
+and written to `terraform.tfvars` as `app_system_identity_principal_id`, then a second apply
+adds the access policy.
+
+### 10. Terraform replaces Jenkins VM when `cloud-init.yml` changes
+
+Any change to `cloud-init.yml` changes the `custom_data` hash, which forces VM replacement
+(`-/+` in the plan). This is expected Terraform behaviour — VM user data is immutable after
+first boot. Fix: accept the replacement, wait ~10 min for cloud-init to complete on the new
+VM, then re-run the Jenkins setup wizard. The SP secret must be rotated and re-added to
+Jenkins credentials each time.
+
+### 11. F1 free tier CPU quota exceeded mid-session
+
+The App Service F1 free tier has a daily CPU quota. During a long session it can be
+exhausted, causing App Service to return HTTP 403 ("Site Disabled") for all requests. The
+container is deployed correctly — the quota suspension is temporary. Fix: update the CD
+health check to treat a 403 response as a passing check with a warning message, rather than
+retrying until timeout and failing the build. The quota resets at midnight UTC.
+
+---
+
+## Security design
+
+- **No secrets in app settings** — `MONGODB_URI`, `JWT_SECRET`, and
+  `APPLICATIONINSIGHTS_CONNECTION_STRING` are Key Vault references resolved by the
+  system-assigned Managed Identity at runtime. The actual values never appear in the portal
+  or in Terraform state as plaintext app settings.
+- **JWT authentication** — 8h expiry, rate-limited login (10 req / 15 min per IP)
+- **Helmet.js** — CSP, X-Frame-Options, HSTS, and other security headers
+- **Non-root container** — app runs as a non-root user inside the container
+- **ACR admin disabled** — registry auth uses Service Principal (Jenkins push) and SP
+  credentials (CD pull); admin credentials never enabled
+
+### Production path: Azure AD B2C
+
+The JWT implementation is intentional for portfolio clarity. A BelairDirect-scale deployment
+would use **Azure AD B2C** for customer identity federation, MFA, self-service password
+reset, and claims-based token enrichment.
 
 ---
 
@@ -266,71 +420,114 @@ curl https://$(terraform output -raw app_service_url)/health
 
 ### Home (Ontario all-perils)
 
-**Included**:
-- Dwelling (replacement cost), Detached Structures, Personal Property, Additional Living Expenses, Personal Liability
+**Included**: Dwelling (replacement cost), Detached Structures, Personal Property,
+Additional Living Expenses, Personal Liability
 
-**Optional add-ons**:
-- Sewer Backup, Overland Water (flooding), Home-Based Business, Jewellery Floater, Identity Theft Protection
-
----
-
-## Observability — Application Insights
-
-Custom events tracked server-side (visible in Azure Monitor → Application Insights → Custom Events):
-
-| Event | Triggered by |
-|---|---|
-| `customer.login` | Successful authentication |
-| `policy.viewed` | GET /api/policies/:id |
-| `coverage.changed` | PATCH /api/policies/:id/coverage |
-| `claim.opened` | POST /api/claims |
-
-Build an Azure Monitor Workbook over these events for a live dashboard showing login volume, claim frequency, and coverage change trends.
+**Optional add-ons**: Sewer Backup, Overland Water, Home-Based Business, Jewellery Floater,
+Identity Theft Protection
 
 ---
 
-## Security design
+## Local development setup
 
-- **No secrets in code or environment variables** — all secrets fetched from Key Vault at startup via Managed Identity
-- **JWT authentication** — 8h expiry, rate-limited login endpoint (10 req / 15 min per IP)
-- **Helmet.js** — sets CSP, X-Frame-Options, HSTS, and other security headers
-- **Non-root container** — app runs as `appuser` (UID unpredictable) inside the container
-- **ACR admin disabled** — registry auth uses Service Principal (Jenkins) and Managed Identity (App Service), never admin credentials
+```bash
+# 1. Clone
+git clone https://github.com/satyadeep11singh/northwind-policy-hub.git
+cd northwind-policy-hub
 
-### Production path: Azure AD B2C
+# 2. Install dependencies (root + client)
+npm install
+npm install --prefix client
 
-The current JWT implementation is intentional for portfolio clarity. In a real BelairDirect-scale deployment this would use **Azure AD B2C** for:
-- Customer identity federation (social login, MFA)
-- Self-service password reset
-- Branded login page
-- Claims-based token enrichment
+# 3. Configure environment
+cp .env.example .env
+# Fill in: MONGODB_URI, JWT_SECRET  (leave KEY_VAULT_URI blank for local)
 
-See branch `feature/b2c-auth` (future) for the full Passport.js + B2C tenant integration.
+# 4. Seed the database
+npm run seed
+
+# 5. Start dev servers (Express API + Vite HMR concurrently)
+npm run dev
+# App:  http://localhost:5173
+# API:  http://localhost:3001
+```
+
+---
+
+## Deployment runbook
+
+### Step 1 — Provision infrastructure
+
+```bash
+cd infra
+cp terraform.tfvars.example terraform.tfvars
+# Fill in: mongodb_uri, jwt_secret, jenkins_ssh_public_key, jenkins_sp_object_id
+
+terraform init
+terraform apply -var-file=terraform.tfvars
+```
+
+### Step 2 — Capture system identity principal ID (two-apply pattern)
+
+```bash
+# After first apply, get the system-assigned identity principal ID
+az webapp identity show \
+  --resource-group rg-northwind-policy-hub-dev \
+  --name nw-policy-hub-{suffix} \
+  --query principalId -o tsv
+
+# Add to terraform.tfvars:
+# app_system_identity_principal_id = "<value above>"
+
+terraform apply -var-file=terraform.tfvars
+```
+
+### Step 3 — Jenkins setup
+
+```bash
+# SSH into the Jenkins VM
+ssh azureuser@$(terraform output -raw jenkins_public_ip)
+
+# Get initial admin password
+cat /var/log/cloud-init-jenkins.log
+```
+
+Open `http://{jenkins_ip}:8080`, complete the setup wizard, install suggested plugins.
+
+### Step 4 — Jenkins credentials and jobs
+
+Create one credential:
+- **ID:** `azure-sp` · **Type:** Username/Password
+- **Username:** SP Client ID · **Password:** SP Client Secret
+
+Create two pipeline jobs:
+1. `northwind-policy-hub-ci` → Pipeline from SCM → Script Path: `jenkins/Jenkinsfile.ci`
+2. `northwind-policy-hub-cd` → Pipeline from SCM → Script Path: `jenkins/Jenkinsfile.cd`
+   → add string parameter `BUILD_TAG`
+
+### Step 5 — First run
+
+Trigger `northwind-policy-hub-ci` manually. CD is triggered automatically on CI success.
+
+```bash
+# Verify
+curl https://$(terraform output -raw app_url)/health
+# Expected: {"status":"ok","version":"1.0.0","buildId":"...","db":"connected"}
+```
 
 ---
 
 ## Cost management
 
-| Resource | SKU | ~Monthly cost (CAD) |
+| Resource | SKU | ~Monthly (CAD) |
 |---|---|---|
-| App Service Plan | Standard S1 | ~$75 |
-| Jenkins VM | Standard_B2s | ~$45 |
+| Jenkins VM | Standard_B2s_v2 | ~$90 |
+| App Service Plan | F1 Free | $0 |
 | Container Registry | Basic | ~$6 |
 | Key Vault | Standard | ~$0.50 |
 | App Insights + Log Analytics | Pay-per-use | ~$2 |
-| **Total while running** | | **~$130/month** |
+| **Total while running** | | **~$100/month** |
 
-**Cost discipline:** Destroy the Jenkins VM (`terraform destroy -target module.jenkins_vm`) between sessions. The App Service can be stopped (not destroyed) to save ~$75/month when not demoing.
-
----
-
-## Switching from MongoDB Atlas to Cosmos DB for MongoDB
-
-Change `DB_PROVIDER` and `MONGODB_URI` in your Key Vault secret or `.env`:
-
-```
-DB_PROVIDER=cosmosdb
-MONGODB_URI=mongodb://<account>:<key>@<account>.mongo.cosmos.azure.com:10255/<db>?ssl=true&replicaSet=globaldb
-```
-
-No application code changes required — the Mongoose driver is protocol-compatible with Cosmos DB for MongoDB.
+**Cost discipline:** The Jenkins VM is the only billable compute resource. Destroy it
+between sessions with `terraform destroy -target azurerm_linux_virtual_machine.jenkins`.
+The App Service F1 is free. Terraform remote state survives destroy.
