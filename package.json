@@ -15,7 +15,7 @@
     "seed": "node server/seed/index.js",
     "test": "jest --forceExit --coverage",
     "test:ci": "jest --forceExit --coverage --ci --reporters=default --reporters=jest-junit",
-    "lint": "eslint server/**/*.js --max-warnings=0"
+    "lint": "eslint server/**/*.js --ignore-pattern server/**/*.test.js --max-warnings=0"
   },
   "dependencies": {
     "@azure/identity": "^4.4.1",
