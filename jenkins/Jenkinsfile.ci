@@ -32,15 +32,32 @@ pipeline {
       }
     }
 
-    stage('Install & Test') {
+    stage('Install') {
       steps {
         sh 'npm ci'
+      }
+    }
+
+    stage('Lint') {
+      steps {
+        sh 'npm run lint'
+      }
+    }
+
+    stage('Test') {
+      steps {
         sh 'npm run test:ci'
       }
       post {
         always {
           junit testResults: 'junit.xml', allowEmptyResults: true
         }
+      }
+    }
+
+    stage('Build') {
+      steps {
+        sh 'npm run build'
       }
     }
 
