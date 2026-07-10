@@ -89,6 +89,125 @@ Demo accounts (password `Demo@1234`):
 
 ---
 
+## Screenshots
+
+### Jenkins VM
+
+The Jenkins VM (`Standard_B2s_v2`, Ubuntu 22.04) is provisioned by Terraform via cloud-init.
+It runs the CI and CD pipelines and hosts the Docker daemon used to build and push images to ACR.
+
+![Jenkins VM overview — Standard_B2s_v2, Ubuntu 22.04, running status and public IP](docs/jenkins-vm-overview.png)
+
+### Jenkins Pipelines
+
+Both pipelines are visible from the Jenkins dashboard. Green status means the last run succeeded.
+The CI job runs on every manual trigger (webhook integration is a future addition); CD is triggered
+automatically by CI on success.
+
+![Jenkins dashboard — northwind-policy-hub-ci and northwind-policy-hub-cd jobs, both green](docs/jenkins-dashboard.png)
+
+The CI pipeline runs 8 stages: Checkout → Install → Lint → Test → Build → Docker Build → Trivy Scan → Push to ACR → Trigger CD.
+Every stage must pass before the next runs — a lint failure stops the build before any image is created.
+
+![Jenkins CI pipeline — all stages green including lint, test, build, trivy, and push to ACR](docs/jenkins-ci-stages.png)
+
+The CD pipeline pulls the image tag passed by CI, updates the App Service container configuration,
+restarts the app, and polls `/health` until the app responds healthy.
+
+![Jenkins CD pipeline — all stages green: Azure Login, Deploy to App Service, Health Check](docs/jenkins-cd-stages.png)
+
+### Azure Container Registry
+
+ACR stores every Docker image built by Jenkins. Images are tagged with `{build_number}-{short_SHA}`
+so any build can be redeployed by passing its tag to the CD pipeline.
+
+![ACR overview — login server URL, Basic SKU, australiaeast region](docs/acr-overview.png)
+
+The repository view shows all pushed tags. The `latest` tag always points to the most recent
+successful CI run.
+
+![ACR repository — northwind-policy-hub image with versioned and latest tags](docs/acr-repository.png)
+
+### App Service
+
+The App Service runs in Docker container mode on the F1 Free Linux plan. After each CD run
+it serves the latest image pulled from ACR.
+
+![App Service overview — nw-policy-hub-f27896, running, F1 Free, Linux container](docs/app-service-overview.png)
+
+The App Service has both a System-Assigned and a User-Assigned Managed Identity. The system-assigned
+identity is used by the Key Vault reference resolver (`keyVaultReferenceIdentity = SystemAssigned`).
+
+![App Service Identity blade — System Assigned enabled, User Assigned identity listed](docs/app-service-identity.png)
+
+All three secrets are stored in Key Vault and referenced via `@Microsoft.KeyVault(SecretUri=...)` syntax.
+App Service resolves these at startup — the actual secret values never appear in the portal or in code.
+
+![App Service Configuration — MONGODB_URI, JWT_SECRET, APPLICATIONINSIGHTS_CONNECTION_STRING as Key Vault references](docs/app-service-configuration.png)
+
+### Key Vault
+
+Key Vault stores the three application secrets. Access is granted to the Terraform SP (to write
+secrets during apply) and to the App Service managed identity (to read secrets at runtime).
+
+![Key Vault overview — kv-nwpolicyhub-f27896, Standard SKU, australiaeast](docs/keyvault-overview.png)
+
+All three secrets are versioned. App Service uses versionless URIs so it automatically picks up
+the latest version without a redeployment.
+
+![Key Vault secrets — mongodb-uri, jwt-secret, appinsights-connection-string](docs/keyvault-secrets.png)
+
+### MongoDB Atlas
+
+MongoDB Atlas (free M0 tier) hosts the customer, policy, billing, and claims data. The cluster
+is outside Terraform — the connection URI is stored in Key Vault and injected into the app at runtime.
+
+![MongoDB Atlas cluster — northwind-policy-hub-db, M0 free tier, connected](docs/mongodb-atlas-cluster.png)
+
+### Application Insights + Monitor Workbook
+
+Application Insights collects auto-instrumented HTTP request telemetry and four custom business
+events (`customer.login`, `policy.viewed`, `coverage.changed`, `claim.opened`). The Log Analytics
+workspace backs the workspace-based App Insights instance.
+
+![Application Insights overview — ai-nw-policy-hub-f27896, request rate and response time graphs](docs/app-insights-overview.png)
+
+The Azure Monitor Workbook provides an operations dashboard with 8 panels covering API health,
+login volume, policy views, coverage changes, and claims. It is provisioned by Terraform and
+bound to the App Insights instance via `source_id`.
+
+![Azure Monitor Workbook — NorthWind Policy Hub Operations, 8 panels with live data](docs/monitor-workbook.png)
+
+### The Application
+
+The login page is rate-limited to 10 attempts per 15 minutes per IP. The rate limiter uses a
+`keyGenerator` that strips the port suffix App Service's proxy appends to `request.ip`.
+
+![App login page — NorthWind Insurance Policy Hub sign-in form](docs/app-login.png)
+
+After login the dashboard shows all active policies for the customer — auto and home policies
+in a single view with policy number, vehicle or property details, and coverage status.
+
+![App dashboard — policy cards showing active auto and home policies](docs/app-dashboard.png)
+
+The policy detail page shows the full coverage breakdown. Optional coverages can be toggled
+on or off, and deductible amounts can be adjusted directly in the portal. Each change fires
+a `coverage.changed` custom event to Application Insights.
+
+![App policy detail — coverage toggles and deductible selector](docs/app-policy-detail.png)
+
+The claims page shows the full claim history with status badges and adjuster notes. New claims
+can be opened directly from this page, which fires a `claim.opened` event to Application Insights.
+
+![App claims page — claim history with status tracker and new claim form](docs/app-claims.png)
+
+The billing page shows the next payment date and amount, payment frequency, and full payment
+history for each policy.
+
+![App billing page — payment schedule and history](docs/app-billing.png)
+
+---
+
 ## Azure services used
 
 | Service | Role | Pattern |
